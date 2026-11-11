@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/* Force Arial typography globally across all elements, inputs, tables, numbers, and lists */
+*,
+*::before,
+*::after {
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
+}
+
+:root {
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
+}
+
+body {
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
+  margin: 0;
+  padding: 0;
+}
+
+@layer utilities {
+  /* Vertical text styling for military consolidated state table headers */
+  .writing-vertical {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    text-orientation: mixed;
+    white-space: nowrap;
+  }
+}
+
+/* Custom dark scrollbar for dense data table */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090e1a;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Official Print Stylesheet for Military Muster Document */
+@media print {
+  @page {
+    size: landscape;
+    margin: 10mm;
+  }
+
+  body, * {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-card {
+    background: #ffffff !important;
+    border: 1px solid #000000 !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .print-table {
+    border: 1px solid #000000 !important;
+    color: #000000 !important;
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  .print-table th,
+  .print-table td {
+    border: 1px solid #000000 !important;
+    color: #000000 !important;
+    background: transparent !important;
+    padding: 2px 4px !important;
+    font-size: 10px !important;
+  }
+
+  .print-header {
+    color: #000000 !important;
+    text-decoration: underline !important;
+  }
+}

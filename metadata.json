@@ -1,0 +1,6 @@
+{
+  "name": "Night Count State",
+  "description": "Military personnel daily night count state and muster management system with consolidated squadron reports, disposal tracking, and official export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
