@@ -11,10 +11,12 @@
   font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
 }
 
+html,
 body {
   font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
   margin: 0;
   padding: 0;
+  overscroll-behavior-y: contain;
 }
 
 @layer utilities {
@@ -50,8 +52,8 @@ body {
 /* Official Print Stylesheet for Military Muster Document */
 @media print {
   @page {
-    size: landscape;
-    margin: 10mm;
+    size: A4 landscape;
+    margin: 8mm;
   }
 
   body, * {
@@ -72,7 +74,7 @@ body {
 
   .print-card {
     background: #ffffff !important;
-    border: 1px solid #000000 !important;
+    border: none !important;
     color: #000000 !important;
     box-shadow: none !important;
     padding: 0 !important;
@@ -91,8 +93,15 @@ body {
     border: 1px solid #000000 !important;
     color: #000000 !important;
     background: transparent !important;
-    padding: 2px 4px !important;
+    padding: 2px 3px !important;
     font-size: 10px !important;
+  }
+
+  .print-table .writing-vertical {
+    writing-mode: vertical-rl !important;
+    transform: rotate(180deg) !important;
+    text-orientation: mixed !important;
+    white-space: nowrap !important;
   }
 
   .print-header {

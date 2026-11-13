@@ -65,6 +65,8 @@ export interface UnitRowState {
   totalOutParade: number;
   onParadeForecast: number;
   rmks: string;
+  disposalCounts?: Record<string, number>;
+  customDisposals?: Record<string, number>;
 }
 
 export interface UnitSummarizedRow {
@@ -74,7 +76,6 @@ export interface UnitSummarizedRow {
   effStr: number;
   leave: number;
   course: number;
-  classExam: number;
   awolDetention: number;
   sickReport: number;
   edExPpgf: number;
@@ -84,7 +85,7 @@ export interface UnitSummarizedRow {
   aftNiFlgNiDuty: number;
   gdTfAirfieldDuty: number;
   driving: number;
-  gamesGuardOfHonor: number;
+  customDisposals?: Record<string, number>;
   totalOutParade: number;
   onParade: number;
   remarks: string;
@@ -104,8 +105,11 @@ export interface DayState {
   formattedDisplayDate: string;
   preparedBy: PreparedByInfo;
   airmen155: Airman[];
+  unitAirmen?: Record<string, Airman[]>;
   disposals: DisposalRecord[];
   consolidatedUnits: UnitRowState[];
   customRemarks?: string;
+  unitRemarks?: Record<string, string>;
+  savedCustomDisposals?: string[];
   rosterVersion?: number;
 }

@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Header } from './components/Header';
 import { ControlsBar } from './components/ControlsBar';
 import { UnitStateView } from './components/UnitStateView';
 import { ConsolidatedWingView } from './components/ConsolidatedWingView';
@@ -15,27 +14,46 @@ import { DayState, Airman, DisposalRecord, PreparedByInfo, UnitRowState } from '
 import {
   loadDayState,
   saveDayState,
+  loadSavedCustomDisposals,
+  saveCustomDisposalsList,
   shiftDate,
   syncConsolidated155Row,
+  getUnitAirmen,
+  setUnitAirmen,
+  setUnitRemarks,
+  loadUiPrefs,
+  saveUiPrefs,
+  savePreparedByStorage,
 } from './utils/storage';
-import { INITIAL_DAY_STATE, DISPOSAL_OPTIONS } from './data/initialData';
+import { DISPOSAL_OPTIONS } from './data/initialData';
+import { FileSpreadsheet, Users, UserCheck } from 'lucide-react';
 
 export default function App() {
-  const [dateIso, setDateIso] = useState<string>('2026-11-11');
-  const [activeTab, setActiveTab] = useState<'155 UASU BAF' | 'Flying Wing' | 'Nominal Roll'>('155 UASU BAF');
-  const [dayState, setDayState] = useState<DayState>(() => loadDayState('2026-11-11'));
+  const initialPrefs = React.useMemo(() => loadUiPrefs(), []);
+  const [dateIso, setDateIso] = useState<string>(initialPrefs.dateIso);
+  const [activeTab, setActiveTab] = useState<string>(initialPrefs.activeTab);
+  const [unitSubTab, setUnitSubTab] = useState<'state' | 'nominalRoll'>(initialPrefs.unitSubTab);
+  const [dayState, setDayState] = useState<DayState>(() => loadDayState(initialPrefs.dateIso));
 
   // Modals state
   const [isPreparedByOpen, setIsPreparedByOpen] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
 
-  // Sync state on date change
+  // Persist current date, tab, and sub-tab so user's view never resets
   useEffect(() => {
-    const loaded = loadDayState(dateIso);
-    setDayState(loaded);
+    saveUiPrefs({ dateIso, activeTab, unitSubTab });
+  }, [dateIso, activeTab, unitSubTab]);
+
+  // Sync state on date change (carrying over previous day's disposals & roster for new dates)
+  useEffect(() => {
+    setDayState((prev) => {
+      if (prev.date === dateIso) return prev;
+      saveDayState(prev);
+      return loadDayState(dateIso, prev);
+    });
   }, [dateIso]);
 
-  // Persist dayState when updated and sync 155 row into consolidated table
+  // Persist dayState when updated and sync unit rows into consolidated table
   const updateAndSaveState = (updater: (prev: DayState) => DayState) => {
     setDayState((prev) => {
       const next = updater(prev);
@@ -44,6 +62,13 @@ export default function App() {
       saveDayState(fullySynced);
       return fullySynced;
     });
+  };
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    if (tab !== 'Flying Wing') {
+      setUnitSubTab('state');
+    }
   };
 
   const handlePrevDate = () => {
@@ -60,30 +85,26 @@ export default function App() {
     setDateIso(newDateIso);
   };
 
+  const activeUnitName = activeTab === 'Flying Wing' ? '155 UASU BAF' : activeTab;
+
   // Update Airman Disposal directly from Nominal Roll dropdown
   const handleUpdateAirmanDisposal = (airmanId: string, disposalVal: string) => {
     updateAndSaveState((prev) => {
-      const airman = prev.airmen155.find((a) => a.id === airmanId);
+      const currentUnitAirmen = getUnitAirmen(prev, activeUnitName);
+      const airman = currentUnitAirmen.find((a) => a.id === airmanId);
       if (!airman) return prev;
 
       if (disposalVal === '-') {
-        // Return to On Parade
         const updatedDisposals = prev.disposals.filter((d) => d.airmanId !== airmanId);
-        const updatedAirmen = prev.airmen155.map((a) =>
+        const updatedAirmen = currentUnitAirmen.map((a) =>
           a.id === airmanId ? { ...a, status: 'on_parade' as const, currentDuty: undefined } : a
         );
-        return {
-          ...prev,
-          disposals: updatedDisposals,
-          airmen155: updatedAirmen,
-        };
+        return setUnitAirmen({ ...prev, disposals: updatedDisposals }, activeUnitName, updatedAirmen);
       } else {
-        // Assigned to a specific disposal/duty
         const dispOpt = DISPOSAL_OPTIONS.find((o) => o.value === disposalVal);
-        const category = dispOpt ? dispOpt.category : 'officeDuty';
+        const category = dispOpt ? dispOpt.category : 'custom';
         const isDet = category === 'detTdy';
 
-        // Check if existing disposal record for this airman exists
         const existingIdx = prev.disposals.findIndex((d) => d.airmanId === airmanId);
         let updatedDisposals: DisposalRecord[];
 
@@ -92,7 +113,7 @@ export default function App() {
           airmanId: airman.id,
           rank: airman.rank,
           name: airman.name,
-          unit: '155 UASU BAF',
+          unit: activeUnitName,
           category,
           displayCategory: disposalVal,
           detail: disposalVal,
@@ -107,7 +128,7 @@ export default function App() {
           updatedDisposals = [...prev.disposals, newRecord];
         }
 
-        const updatedAirmen = prev.airmen155.map((a) =>
+        const updatedAirmen = currentUnitAirmen.map((a) =>
           a.id === airmanId
             ? {
                 ...a,
@@ -117,12 +138,116 @@ export default function App() {
             : a
         );
 
-        return {
-          ...prev,
-          disposals: updatedDisposals,
-          airmen155: updatedAirmen,
-        };
+        const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
+        const trimmedCustom = disposalVal.trim();
+        const nextSavedCustom =
+          category === 'custom' &&
+          trimmedCustom &&
+          !prevSavedCustom.some((c) => c.toLowerCase() === trimmedCustom.toLowerCase())
+            ? [...prevSavedCustom, trimmedCustom]
+            : prevSavedCustom;
+
+        if (nextSavedCustom !== prevSavedCustom) {
+          saveCustomDisposalsList(nextSavedCustom);
+        }
+
+        return setUnitAirmen(
+          {
+            ...prev,
+            disposals: updatedDisposals,
+            savedCustomDisposals: nextSavedCustom,
+          },
+          activeUnitName,
+          updatedAirmen
+        );
       }
+    });
+  };
+
+  // Add a custom disposal name persistently
+  const handleAddCustomDisposal = (customName: string) => {
+    const trimmed = customName.trim();
+    if (!trimmed) return;
+    updateAndSaveState((prev) => {
+      const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
+      if (prevSavedCustom.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+        return prev;
+      }
+      const nextSavedCustom = [...prevSavedCustom, trimmed];
+      saveCustomDisposalsList(nextSavedCustom);
+      return {
+        ...prev,
+        savedCustomDisposals: nextSavedCustom,
+      };
+    });
+  };
+
+  // Delete a saved custom disposal manually via Cross button
+  const handleDeleteCustomDisposal = (customName: string) => {
+    updateAndSaveState((prev) => {
+      const targetLower = customName.trim().toLowerCase();
+      const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
+      const nextSavedCustom = prevSavedCustom.filter((c) => c.toLowerCase() !== targetLower);
+      saveCustomDisposalsList(nextSavedCustom);
+
+      const affectedAirmanIds = new Set(
+        prev.disposals
+          .filter(
+            (d) =>
+              d.category === 'custom' &&
+              (d.detail || d.displayCategory || '').trim().toLowerCase() === targetLower
+          )
+          .map((d) => d.airmanId)
+          .filter(Boolean)
+      );
+
+      const updatedDisposals = prev.disposals.filter(
+        (d) =>
+          !(
+            d.category === 'custom' &&
+            (d.detail || d.displayCategory || '').trim().toLowerCase() === targetLower
+          )
+      );
+
+      const resetAirmenList = (list: Airman[]) =>
+        list.map((a) =>
+          affectedAirmanIds.has(a.id)
+            ? { ...a, status: 'on_parade' as const, currentDuty: undefined }
+            : a
+        );
+
+      const nextUnitAirmen: Record<string, Airman[]> = {};
+      if (prev.unitAirmen) {
+        Object.entries(prev.unitAirmen).forEach(([u, list]) => {
+          nextUnitAirmen[u] = resetAirmenList(list);
+        });
+      }
+
+      const nextConsolidatedUnits = prev.consolidatedUnits.map((u) => {
+        if (!u.customDisposals && !u.disposalCounts) return u;
+        const nextCustom = u.customDisposals ? { ...u.customDisposals } : undefined;
+        const nextCounts = u.disposalCounts ? { ...u.disposalCounts } : undefined;
+        if (nextCustom) {
+          Object.keys(nextCustom).forEach((k) => {
+            if (k.trim().toLowerCase() === targetLower) delete nextCustom[k];
+          });
+        }
+        if (nextCounts) {
+          Object.keys(nextCounts).forEach((k) => {
+            if (k.trim().toLowerCase() === targetLower) delete nextCounts[k];
+          });
+        }
+        return { ...u, customDisposals: nextCustom, disposalCounts: nextCounts };
+      });
+
+      return {
+        ...prev,
+        savedCustomDisposals: nextSavedCustom,
+        disposals: updatedDisposals,
+        airmen155: resetAirmenList(prev.airmen155),
+        unitAirmen: nextUnitAirmen,
+        consolidatedUnits: nextConsolidatedUnits,
+      };
     });
   };
 
@@ -132,19 +257,19 @@ export default function App() {
       const dispToRemove = prev.disposals.find((d) => d.id === disposalId);
       const filteredDisposals = prev.disposals.filter((d) => d.id !== disposalId);
 
-      let updatedAirmen = prev.airmen155;
       if (dispToRemove && dispToRemove.airmanId) {
-        updatedAirmen = prev.airmen155.map((a) =>
+        const unit = dispToRemove.unit || activeUnitName;
+        const updatedList = getUnitAirmen(prev, unit).map((a) =>
           a.id === dispToRemove.airmanId
             ? { ...a, status: 'on_parade' as const, currentDuty: undefined }
             : a
         );
+        return setUnitAirmen({ ...prev, disposals: filteredDisposals }, unit, updatedList);
       }
 
       return {
         ...prev,
         disposals: filteredDisposals,
-        airmen155: updatedAirmen,
       };
     });
   };
@@ -152,7 +277,8 @@ export default function App() {
   // Quick toggle parade status
   const handleToggleAirmanParade = (airmanId: string) => {
     updateAndSaveState((prev) => {
-      const airman = prev.airmen155.find((a) => a.id === airmanId);
+      const currentUnitAirmen = getUnitAirmen(prev, activeUnitName);
+      const airman = currentUnitAirmen.find((a) => a.id === airmanId);
       if (!airman) return prev;
 
       if (airman.status === 'on_parade') {
@@ -161,85 +287,90 @@ export default function App() {
           airmanId: airman.id,
           rank: airman.rank,
           name: airman.name,
-          unit: '155 UASU BAF',
+          unit: activeUnitName,
           category: 'officeDuty',
           displayCategory: 'Office Duty',
           detail: 'Office Duty',
           date: prev.date,
           period: 'Night',
         };
-        return {
-          ...prev,
-          disposals: [...prev.disposals, newDisp],
-          airmen155: prev.airmen155.map((a) =>
-            a.id === airmanId ? { ...a, status: 'duty' as const, currentDuty: 'Office Duty' } : a
-          ),
-        };
+        const updatedList = currentUnitAirmen.map((a) =>
+          a.id === airmanId ? { ...a, status: 'duty' as const, currentDuty: 'Office Duty' } : a
+        );
+        return setUnitAirmen(
+          { ...prev, disposals: [...prev.disposals, newDisp] },
+          activeUnitName,
+          updatedList
+        );
       } else {
-        return {
-          ...prev,
-          disposals: prev.disposals.filter((d) => d.airmanId !== airmanId),
-          airmen155: prev.airmen155.map((a) =>
-            a.id === airmanId ? { ...a, status: 'on_parade' as const, currentDuty: undefined } : a
-          ),
-        };
+        const updatedList = currentUnitAirmen.map((a) =>
+          a.id === airmanId ? { ...a, status: 'on_parade' as const, currentDuty: undefined } : a
+        );
+        return setUnitAirmen(
+          { ...prev, disposals: prev.disposals.filter((d) => d.airmanId !== airmanId) },
+          activeUnitName,
+          updatedList
+        );
       }
     });
   };
 
-  // Add new airman to roster
+  // Add new airman to active unit roster
   const handleAddAirmanToRoster = (newAirmanData: Omit<Airman, 'id'>) => {
-    updateAndSaveState((prev) => ({
-      ...prev,
-      airmen155: [
-        ...prev.airmen155,
+    updateAndSaveState((prev) => {
+      const targetUnit = newAirmanData.unit || activeUnitName;
+      const currentList = getUnitAirmen(prev, targetUnit);
+      const updatedList = [
+        ...currentList,
         {
           ...newAirmanData,
+          unit: targetUnit,
           id: `airman-${Date.now()}`,
         },
-      ],
-    }));
+      ];
+      return setUnitAirmen(prev, targetUnit, updatedList);
+    });
   };
 
   // Update Prepared By
   const handleSavePreparedBy = (updated: PreparedByInfo) => {
+    savePreparedByStorage(updated);
     updateAndSaveState((prev) => ({
       ...prev,
       preparedBy: updated,
     }));
   };
 
-  // Update custom remarks
+  // Update unit remarks
   const handleUpdateRemarks = (remarks: string) => {
-    updateAndSaveState((prev) => ({
-      ...prev,
-      customRemarks: remarks,
-    }));
+    updateAndSaveState((prev) => setUnitRemarks(prev, activeUnitName, remarks));
   };
 
-  // Delete airman from roster
+  // Delete airman from active unit roster
   const handleDeleteAirman = (airmanId: string) => {
-    updateAndSaveState((prev) => ({
-      ...prev,
-      airmen155: prev.airmen155.filter((a) => a.id !== airmanId),
-      disposals: prev.disposals.filter((d) => d.airmanId !== airmanId),
-    }));
+    updateAndSaveState((prev) => {
+      const updatedList = getUnitAirmen(prev, activeUnitName).filter((a) => a.id !== airmanId);
+      return setUnitAirmen(
+        { ...prev, disposals: prev.disposals.filter((d) => d.airmanId !== airmanId) },
+        activeUnitName,
+        updatedList
+      );
+    });
   };
 
   // Full airman update (from clicking row in Nominal Roll)
   const handleUpdateAirmanFull = (updatedAirman: Airman, disposalVal: string) => {
     updateAndSaveState((prev) => {
-      // 1. Update airman in roster
-      const updatedAirmen = prev.airmen155.map((a) =>
+      const targetUnit = updatedAirman.unit || activeUnitName;
+      const updatedAirmen = getUnitAirmen(prev, targetUnit).map((a) =>
         a.id === updatedAirman.id ? { ...updatedAirman } : a
       );
 
-      // 2. Update disposals
       let updatedDisposals = prev.disposals.filter((d) => d.airmanId !== updatedAirman.id);
 
       if (disposalVal && disposalVal !== '-') {
         const dispOpt = DISPOSAL_OPTIONS.find((o) => o.value === disposalVal);
-        const category = dispOpt ? dispOpt.category : 'officeDuty';
+        const category = dispOpt ? dispOpt.category : 'custom';
         const isDet = category === 'detTdy';
 
         const newRecord: DisposalRecord = {
@@ -247,7 +378,7 @@ export default function App() {
           airmanId: updatedAirman.id,
           rank: updatedAirman.rank,
           name: updatedAirman.name,
-          unit: '155 UASU BAF',
+          unit: targetUnit,
           category,
           displayCategory: disposalVal,
           detail: disposalVal,
@@ -257,11 +388,7 @@ export default function App() {
         updatedDisposals.push(newRecord);
       }
 
-      return {
-        ...prev,
-        airmen155: updatedAirmen,
-        disposals: updatedDisposals,
-      };
+      return setUnitAirmen({ ...prev, disposals: updatedDisposals }, targetUnit, updatedAirmen);
     });
   };
 
@@ -275,61 +402,126 @@ export default function App() {
     }));
   };
 
+  const activeUnitAirmenCount = getUnitAirmen(dayState, activeUnitName).length;
+
   return (
     <div className="min-h-screen bg-[#070d18] text-slate-100 flex flex-col font-sans antialiased selection:bg-emerald-500 selection:text-black">
-      {/* Top Header */}
-      <Header
-        currentUnit="155-UASU-BAF"
-        dateStr={dayState.formattedDisplayDate}
-        onResetToToday={() => setDateIso('2026-11-11')}
-      />
+      <div className={isPrintOpen ? 'no-print flex-1 flex flex-col' : 'flex-1 flex flex-col'}>
+        {/* Controls Bar with Date and Flying Wing + All Squadron/Unit tabs */}
+        <ControlsBar
+          dateIso={dateIso}
+          formattedDate={dayState.formattedDisplayDate}
+          onPrevDate={handlePrevDate}
+          onNextDate={handleNextDate}
+          onDateChange={handleDateChange}
+          onOpenPrint={() => setIsPrintOpen(true)}
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+        />
 
-      {/* Controls Bar with Date and Nominal Roll tab */}
-      <ControlsBar
-        dateIso={dateIso}
-        formattedDate={dayState.formattedDisplayDate}
-        onPrevDate={handlePrevDate}
-        onNextDate={handleNextDate}
-        onDateChange={handleDateChange}
-        onOpenPrint={() => setIsPrintOpen(true)}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-      />
+        {/* Main Content Area */}
+        <main className="flex-1 w-full">
+          {activeTab === 'Flying Wing' ? (
+            <>
+              {/* 2 Sub-options ONLY for Flying Wing: 1. Consolidated State, 2. Prepared By */}
+              <div className="w-full max-w-7xl mx-auto px-4 mb-3">
+                <div className="inline-flex items-center gap-1.5 bg-[#0b1424] border border-[#1b2a44] p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setIsPreparedByOpen(false)}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      !isPreparedByOpen
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Consolidated State</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsPreparedByOpen(true)}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      isPreparedByOpen
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Prepared By</span>
+                  </button>
+                </div>
+              </div>
 
-      {/* Main Content Area */}
-      <main className="flex-1 w-full">
-        {activeTab === '155 UASU BAF' && (
-          <UnitStateView
-            dayState={dayState}
-            onRemoveDisposal={handleRemoveDisposal}
-            onToggleAirmanParade={handleToggleAirmanParade}
-            onSelectAirmanForDisposal={() => {
-              setActiveTab('Nominal Roll');
-            }}
-            onUpdateRemarks={handleUpdateRemarks}
-          />
-        )}
+              <ConsolidatedWingView
+                dayState={dayState}
+                onUpdateSquadronRow={handleUpdateSquadronRow}
+                onSelectUnit={(unitName) => handleTabChange(unitName)}
+                onAddCustomDisposal={handleAddCustomDisposal}
+                onDeleteCustomDisposal={handleDeleteCustomDisposal}
+              />
+            </>
+          ) : (
+            <>
+              {/* Inner Sub-Tabs inside each Squadron/Unit (Night Count State & Nominal Roll) */}
+              <div className="w-full max-w-7xl mx-auto px-4 mb-3">
+                <div className="inline-flex items-center gap-1.5 bg-[#0b1424] border border-[#1b2a44] p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setUnitSubTab('state')}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      unitSubTab === 'state'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Night Count State</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUnitSubTab('nominalRoll')}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      unitSubTab === 'nominalRoll'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Nominal Roll</span>
+                    <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-slate-900/60 text-[10px] text-slate-200">
+                      {activeUnitAirmenCount}
+                    </span>
+                  </button>
+                </div>
+              </div>
 
-        {activeTab === 'Flying Wing' && (
-          <ConsolidatedWingView
-            dayState={dayState}
-            onUpdateSquadronRow={handleUpdateSquadronRow}
-            onSwitchToUnit={() => setActiveTab('155 UASU BAF')}
-          />
-        )}
+              {unitSubTab === 'state' ? (
+                <UnitStateView
+                  unitName={activeUnitName}
+                  dayState={dayState}
+                  onRemoveDisposal={handleRemoveDisposal}
+                  onToggleAirmanParade={handleToggleAirmanParade}
+                  onSelectAirmanForDisposal={() => setUnitSubTab('nominalRoll')}
+                  onUpdateRemarks={handleUpdateRemarks}
+                />
+              ) : (
+                <NominalRollView
+                  unitName={activeUnitName}
+                  dayState={dayState}
+                  onUpdateAirmanDisposal={handleUpdateAirmanDisposal}
+                  onUpdateAirmanFull={handleUpdateAirmanFull}
+                  onAddAirman={handleAddAirmanToRoster}
+                  onDeleteAirman={handleDeleteAirman}
+                  onDeleteCustomDisposal={handleDeleteCustomDisposal}
+                />
+              )}
+            </>
+          )}
+        </main>
+      </div>
 
-        {activeTab === 'Nominal Roll' && (
-          <NominalRollView
-            dayState={dayState}
-            onUpdateAirmanDisposal={handleUpdateAirmanDisposal}
-            onUpdateAirmanFull={handleUpdateAirmanFull}
-            onAddAirman={handleAddAirmanToRoster}
-            onDeleteAirman={handleDeleteAirman}
-          />
-        )}
-      </main>
-
-      {/* Prepared By Modal (accessible by clicking signature block in state view) */}
+      {/* Prepared By Modal */}
       <PreparedByModal
         isOpen={isPreparedByOpen}
         onClose={() => setIsPreparedByOpen(false)}
@@ -342,7 +534,8 @@ export default function App() {
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         dayState={dayState}
-        activeTab={activeTab === 'Flying Wing' ? 'Flying Wing' : '155 UASU BAF'}
+        activeTab={activeTab}
+        unitSubTab={unitSubTab}
       />
     </div>
   );
