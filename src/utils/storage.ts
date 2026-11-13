@@ -62,13 +62,46 @@ export function loadDayState(dateIso: string): DayState {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}${dateIso}`);
     if (raw) {
       const parsed = JSON.parse(raw);
-      // Migrate to short names roster if names contain 'Md' or full names
-      const hasFullNames = parsed.airmen155?.some((a: any) => a.name.includes('Md ') || a.name.includes('Hossen') || a.name.includes('Islam'));
-      if (!parsed.airmen155 || parsed.airmen155.length < 24 || hasFullNames) {
+      // Only migrate legacy rosters that still have full names ('Md ', 'Hossen', 'Islam') or invalid array
+      const hasFullNames =
+        Array.isArray(parsed.airmen155) &&
+        parsed.airmen155.some(
+          (a: any) =>
+            typeof a?.name === 'string' &&
+            (a.name.includes('Md ') || a.name.includes('Hossen') || a.name.includes('Islam'))
+        );
+
+      if (!Array.isArray(parsed.airmen155) || (parsed.rosterVersion !== 2 && hasFullNames)) {
         parsed.airmen155 = INITIAL_AIRMEN_155;
         parsed.disposals = INITIAL_DISPOSALS;
         parsed.preparedBy = INITIAL_PREPARED_BY;
+      } else if (parsed.rosterVersion !== 2) {
+        const legacyMap: Record<string, string> = {
+          Canteen: 'Office Duty',
+          Bakery: 'Office Duty',
+          'Base Security (GD)': 'GD/TF/Airfield Duty',
+          'Airfield Duty': 'GD/TF/Airfield Duty',
+          CMH: 'CMH/ BNS/ BSH/Qmt',
+          AWOL: 'AWOL/Detention',
+          Games: 'Games /Guard of Honor',
+          'Guard of Honor': 'Games /Guard of Honor',
+        };
+        if (Array.isArray(parsed.disposals)) {
+          parsed.disposals = parsed.disposals.map((d: any) => {
+            const mapped = legacyMap[d.detail] || legacyMap[d.displayCategory];
+            return mapped ? { ...d, detail: mapped, displayCategory: mapped } : d;
+          });
+        }
+        if (Array.isArray(parsed.airmen155)) {
+          parsed.airmen155 = parsed.airmen155.map((a: any) =>
+            a.currentDuty && legacyMap[a.currentDuty]
+              ? { ...a, currentDuty: legacyMap[a.currentDuty] }
+              : a
+          );
+        }
       }
+
+      parsed.rosterVersion = 2;
       return parsed;
     }
   } catch (err) {
@@ -79,12 +112,14 @@ export function loadDayState(dateIso: string): DayState {
     ...INITIAL_DAY_STATE,
     date: dateIso,
     formattedDisplayDate: formatDateToMilitary(dateIso),
+    rosterVersion: 2,
   };
 }
 
 export function saveDayState(state: DayState): void {
   try {
-    localStorage.setItem(`${STORAGE_PREFIX}${state.date}`, JSON.stringify(state));
+    const stateToSave = { ...state, rosterVersion: 2 };
+    localStorage.setItem(`${STORAGE_PREFIX}${state.date}`, JSON.stringify(stateToSave));
     // Also track in history dates list
     const historyRaw = localStorage.getItem('night_count_history_dates');
     const historyList: string[] = historyRaw ? JSON.parse(historyRaw) : [];

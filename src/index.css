@@ -24,6 +24,10 @@ body {
     transform: rotate(180deg);
     text-orientation: mixed;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
   }
 }
 

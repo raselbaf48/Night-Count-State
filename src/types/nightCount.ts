@@ -107,4 +107,5 @@ export interface DayState {
   disposals: DisposalRecord[];
   consolidatedUnits: UnitRowState[];
   customRemarks?: string;
+  rosterVersion?: number;
 }

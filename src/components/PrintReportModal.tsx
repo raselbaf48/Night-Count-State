@@ -20,6 +20,9 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   const summarized155 = calculate155SummarizedRow(dayState);
 
   const unitDisposals = dayState.disposals.filter((d) => d.unit === '155 UASU BAF');
+  const tdyDisposals = unitDisposals.filter((d) => d.category === 'detTdy');
+  const dutyDisposals = unitDisposals.filter((d) => d.category !== 'detTdy');
+
   const onParadeAirmen = dayState.airmen155.filter(
     (a) => a.status === 'on_parade' && !unitDisposals.some((d) => d.airmanId === a.id)
   );
@@ -31,27 +34,32 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
     return val || '-';
   };
 
+  const formatTdyDetail = (detail: string) => {
+    const match = detail.match(/^TDY\s*\(([^)]+)\)$/i);
+    return match ? match[1].trim() : detail;
+  };
+
   const columns = [
-    { key: 'sqnUnit', label: 'Sqn/Unit', width: 'min-w-[120px]' },
-    { key: 'totalStr', label: 'Total Str', width: 'min-w-[42px]' },
-    { key: 'detTdy', label: 'Det/Tdy', width: 'min-w-[40px]' },
-    { key: 'effStr', label: 'Eff Str', width: 'min-w-[42px]' },
-    { key: 'leave', label: 'Leave', width: 'min-w-[36px]' },
-    { key: 'course', label: 'Course', width: 'min-w-[36px]' },
-    { key: 'classExam', label: 'Class/Exam', width: 'min-w-[38px]' },
-    { key: 'awolDetention', label: 'AWOL/Detention', width: 'min-w-[38px]' },
-    { key: 'sickReport', label: 'Sick report', width: 'min-w-[38px]' },
-    { key: 'edExPpgf', label: 'ED/ EX PPGF', width: 'min-w-[38px]' },
-    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH/Qmt', width: 'min-w-[44px]' },
-    { key: 'ucUBoard', label: 'U/C, U/Board', width: 'min-w-[38px]' },
-    { key: 'officeDuty', label: 'Office Duty', width: 'min-w-[38px]' },
-    { key: 'aftNiFlgNiDuty', label: 'Aft/Ni flg/Ni Duty', width: 'min-w-[40px]' },
-    { key: 'gdTfAirfieldDuty', label: 'GD/TF/Airfield Duty', width: 'min-w-[42px]' },
-    { key: 'driving', label: 'Driving', width: 'min-w-[36px]' },
-    { key: 'gamesGuardOfHonor', label: 'Games /Guard of Honor', width: 'min-w-[42px]' },
-    { key: 'totalOutParade', label: 'Total Out Parade', width: 'min-w-[44px]' },
-    { key: 'onParade', label: 'On Parade', width: 'min-w-[44px]' },
-    { key: 'remarks', label: 'Remarks', width: 'min-w-[60px]' },
+    { key: 'sqnUnit', label: 'Sqn/Unit' },
+    { key: 'totalStr', label: 'Total Str' },
+    { key: 'detTdy', label: 'Det/Tdy' },
+    { key: 'effStr', label: 'Eff Str' },
+    { key: 'leave', label: 'Leave' },
+    { key: 'course', label: 'Course' },
+    { key: 'classExam', label: 'Class/Exam' },
+    { key: 'awolDetention', label: 'AWOL/Detention' },
+    { key: 'sickReport', label: 'Sick report' },
+    { key: 'edExPpgf', label: 'ED/EX PPGF' },
+    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH/Qmt' },
+    { key: 'ucUBoard', label: 'U/C, U/Board' },
+    { key: 'officeDuty', label: 'Office Duty' },
+    { key: 'aftNiFlgNiDuty', label: 'Aft/Ni flg/Ni Duty' },
+    { key: 'gdTfAirfieldDuty', label: 'GD/TF/Airfield Duty' },
+    { key: 'driving', label: 'Driving' },
+    { key: 'gamesGuardOfHonor', label: 'Games /Guard of Honor' },
+    { key: 'totalOutParade', label: 'Total Out Parade' },
+    { key: 'onParade', label: 'On Parade' },
+    { key: 'remarks', label: 'Remarks' },
   ];
 
   const handlePrint = () => {
@@ -59,24 +67,21 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   };
 
   const handleExportDoc = () => {
-    let docHTML = `
+    const docHTML = `
       <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
       <head>
         <meta charset='utf-8'>
         <title>NT COUNT STATE - 155 UASU BAF</title>
         <style>
-          body { font-family: Arial, sans-serif; font-size: 11pt; color: #000; }
-          .title { text-align: center; font-weight: bold; font-size: 13pt; text-decoration: underline; margin-bottom: 2px; }
-          .subtitle { text-align: center; font-weight: bold; font-size: 13pt; text-decoration: underline; margin-bottom: 12px; }
-          .date { text-align: right; font-weight: bold; font-size: 10pt; margin-bottom: 6px; }
-          table { border-collapse: collapse; width: 100%; margin-bottom: 20px; font-size: 9pt; }
-          th, td { border: 1px solid #000; padding: 4px; text-align: center; }
-          .text-left { text-align: left; }
-          .underline { text-decoration: underline; font-weight: bold; font-size: 11pt; margin-bottom: 8px; }
-          .section-grid { display: flex; width: 100%; margin-top: 15px; }
-          .col { width: 50%; vertical-align: top; }
-          ol { margin: 0; padding-left: 20px; }
-          li { margin-bottom: 3px; font-size: 10pt; }
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #000; }
+          .title { text-align: center; font-weight: bold; font-size: 14px; text-decoration: underline; margin-bottom: 2px; }
+          .subtitle { text-align: center; font-weight: bold; font-size: 14px; text-decoration: underline; margin-bottom: 10px; }
+          .date { text-align: right; font-weight: bold; font-size: 12px; margin-bottom: 4px; }
+          table { border-collapse: collapse; width: 100%; margin-bottom: 20px; font-size: 12px; }
+          th, td { border: 1px solid #000; padding: 4px; text-align: center; vertical-align: middle; }
+          .underline { text-decoration: underline; font-weight: bold; font-size: 12px; margin-bottom: 8px; }
+          ol { margin: 0; padding-left: 18px; }
+          li { margin-bottom: 3px; font-size: 12px; }
         </style>
       </head>
       <body>
@@ -92,7 +97,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
           </thead>
           <tbody>
             <tr>
-              <td class="text-left" style="font-weight:bold;">155 UASU BAF</td>
+              <td style="font-weight:bold;">155 UASU BAF</td>
               <td>${summarized155.totalStr}</td>
               <td>${summarized155.detTdy || '-'}</td>
               <td style="font-weight:bold;">${summarized155.effStr}</td>
@@ -118,16 +123,22 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
 
         <table style="border:none; width:100%;">
           <tr>
-            <td style="border:none; width:50%; vertical-align:top; text-align:left;">
-              <div class="underline">On Parade (${onParadeAirmen.length})</div>
+            <td style="border:none; width:40%; vertical-align:top; text-align:left;">
+              <div class="underline">ON PARADE</div>
               <ol>
                 ${onParadeAirmen.map((a) => `<li>${a.rank} ${a.name}</li>`).join('')}
               </ol>
             </td>
-            <td style="border:none; width:50%; vertical-align:top; text-align:left;">
-              <div class="underline">Duty On (${unitDisposals.length})</div>
+            <td style="border:none; width:30%; vertical-align:top; text-align:left;">
+              <div class="underline">TDY</div>
               <ol>
-                ${unitDisposals.map((d) => `<li>${d.rank} ${d.name} - ${d.detail || d.displayCategory}</li>`).join('')}
+                ${tdyDisposals.map((d) => `<li>${d.rank} ${d.name} - ${formatTdyDetail(d.detail || d.displayCategory)}</li>`).join('')}
+              </ol>
+            </td>
+            <td style="border:none; width:30%; vertical-align:top; text-align:left;">
+              <div class="underline">DUTY ON</div>
+              <ol>
+                ${dutyDisposals.map((d) => `<li>${d.rank} ${d.name} - ${d.detail || d.displayCategory}</li>`).join('')}
               </ol>
             </td>
           </tr>
@@ -152,7 +163,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150">
       <div className="bg-[#0b1424] border border-slate-700/80 w-full max-w-6xl max-h-[95vh] flex flex-col rounded-xl shadow-2xl overflow-hidden text-slate-200">
-        {/* Header matching image_8a684474.png */}
+        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 bg-[#0e1b30] border-b border-slate-700/80 no-print">
           <div className="flex items-center gap-3">
             <button
@@ -171,7 +182,6 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* Export Doc Button */}
             <button
               onClick={handleExportDoc}
               className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#2563eb] hover:bg-blue-500 text-white font-semibold text-xs rounded-lg transition-colors cursor-pointer shadow-sm"
@@ -181,7 +191,6 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
               <span>Export Doc</span>
             </button>
 
-            {/* Official Export / Print Button */}
             <button
               onClick={handlePrint}
               className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg transition-colors cursor-pointer shadow-sm"
@@ -193,42 +202,47 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
           </div>
         </div>
 
-        {/* Printable Document Preview Area matching image_8a684474.png */}
+        {/* Printable Document Preview Area */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#070d18]">
-          <div className="bg-[#0b1424] border border-slate-700/80 rounded-xl p-5 sm:p-7 shadow-2xl max-w-5xl mx-auto print-card">
-            {/* Center Titles & Date */}
-            <div className="flex flex-col items-center justify-center text-center relative mb-5">
+          <div className="bg-[#0b1424] border border-slate-700/80 rounded-xl p-5 sm:p-7 shadow-2xl max-w-6xl mx-auto print-card text-[12px]">
+            {/* Center Titles */}
+            <div className="flex flex-col items-center justify-center text-center mb-2">
               <h2 className="text-sm sm:text-base font-bold tracking-wider text-slate-100 uppercase underline decoration-slate-400 underline-offset-4">
                 NT COUNT STATE: AIRMEN
               </h2>
               <h3 className="text-sm sm:text-base font-bold tracking-wider text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mt-0.5">
                 155 UASU BAF
               </h3>
-
-              <div className="w-full flex justify-end mt-2 sm:mt-0 sm:absolute sm:right-0 sm:bottom-0">
-                <span className="text-xs font-semibold text-slate-200">
-                  Date: {dayState.formattedDisplayDate}
-                </span>
-              </div>
             </div>
 
-            {/* The 20-Column State Table */}
+            {/* Date immediately above table top-right corner */}
+            <div className="flex justify-end mb-1.5">
+              <span className="text-[12px] font-semibold text-slate-200">
+                Date: {dayState.formattedDisplayDate}
+              </span>
+            </div>
+
+            {/* The 20-Column State Table - Autofit & Centered */}
             <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] mb-6">
-              <table className="w-full text-xs text-center border-collapse print-table">
+              <table className="w-full table-auto text-[12px] text-center border-collapse print-table">
                 <thead>
                   <tr className="bg-[#0f1b2f] border-b border-slate-700 text-slate-200">
                     {columns.map((col, idx) => (
                       <th
                         key={col.key}
-                        className={`border-r border-slate-700/80 p-1 font-semibold text-[11px] align-bottom pb-2 ${col.width} ${
-                          idx === 0 ? 'text-left pl-3 align-middle py-3' : 'h-36'
+                        className={`border-r last:border-r-0 border-slate-700/80 px-1.5 py-2 font-semibold text-[12px] align-middle text-center whitespace-nowrap ${
+                          idx === 0 ? 'px-3' : 'h-36'
                         }`}
                       >
                         {idx === 0 ? (
-                          col.label
-                        ) : (
-                          <div className="writing-vertical mx-auto max-h-32 text-slate-200 font-medium">
+                          <div className="flex items-center justify-center text-center">
                             {col.label}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center h-full w-full">
+                            <div className="writing-vertical text-slate-200 font-medium text-[12px]">
+                              {col.label}
+                            </div>
                           </div>
                         )}
                       </th>
@@ -236,65 +250,65 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-slate-800 text-slate-100">
-                    <td className="p-2.5 font-bold text-left pl-3 text-slate-100 border-r border-slate-700/80 text-xs">
+                  <tr className="border-b border-slate-800 text-slate-100 text-[12px]">
+                    <td className="px-3 py-2.5 font-bold text-center whitespace-nowrap text-slate-100 border-r border-slate-700/80">
                       155 UASU BAF
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 font-bold text-slate-100">
+                    <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-slate-100 whitespace-nowrap">
                       {displayVal(summarized155.totalStr)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.detTdy)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 font-bold text-emerald-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-emerald-400 whitespace-nowrap">
                       {displayVal(summarized155.effStr)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.leave)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.course)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.classExam)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.awolDetention)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.sickReport)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.edExPpgf)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.cmhBnsBshQmt)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.ucUBoard)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 font-semibold text-amber-300">
+                    <td className="px-2 py-2 border-r border-slate-700/80 font-semibold text-amber-300 whitespace-nowrap">
                       {displayVal(summarized155.officeDuty)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.aftNiFlgNiDuty)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.gdTfAirfieldDuty)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.driving)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                       {displayVal(summarized155.gamesGuardOfHonor)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 font-bold text-rose-400">
+                    <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-rose-400 whitespace-nowrap">
                       {displayVal(summarized155.totalOutParade)}
                     </td>
-                    <td className="p-2 border-r border-slate-700/80 font-bold text-emerald-400 text-sm">
+                    <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-emerald-400 whitespace-nowrap">
                       {displayVal(summarized155.onParade)}
                     </td>
-                    <td className="p-2 text-slate-300 text-xs">
+                    <td className="px-2 py-2 text-slate-300 text-[12px] whitespace-nowrap">
                       {dayState.customRemarks || 'Nil'}
                     </td>
                   </tr>
@@ -302,25 +316,23 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
               </table>
             </div>
 
-            {/* Breakdown Lists matching image_8a684474.png */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-xs text-slate-200">
-              {/* Left Column: On Parade (underlined title) */}
+            {/* Breakdown Lists: On Parade, TDY, and Duty On */}
+            <div className="flex flex-row flex-wrap gap-x-12 sm:gap-x-16 gap-y-6 text-[12px] text-slate-200">
+              {/* On Parade */}
               <div>
-                <h4 className="font-bold text-xs text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-                  On Parade
+                <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                  ON PARADE
                 </h4>
 
                 {onParadeAirmen.length === 0 ? (
-                  <div className="text-slate-500 italic">No airmen on parade</div>
+                  <div className="text-slate-500 italic">Nil</div>
                 ) : (
-                  <div className="flex flex-row gap-4 sm:gap-6">
+                  <div className="flex flex-row gap-6 sm:gap-10">
                     {/* Left Sub-Column: 1 to 15 */}
-                    <div className="flex-1 space-y-1">
+                    <div className="space-y-1">
                       {onParadeAirmen.slice(0, 15).map((airman, idx) => (
-                        <div key={airman.id} className="flex items-center gap-1.5 py-0.5">
-                          <span className="text-slate-400 w-5 text-right font-medium">
-                            {idx + 1}.
-                          </span>
+                        <div key={airman.id} className="py-0.5 whitespace-nowrap">
+                          <span className="text-slate-400 font-medium">{idx + 1}. </span>
                           <span className="text-slate-200 font-medium">
                             {airman.rank} {airman.name}
                           </span>
@@ -329,37 +341,57 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                     </div>
 
                     {/* Right Sub-Column: 16 onwards */}
-                    <div className="flex-1 space-y-1">
-                      {onParadeAirmen.slice(15).map((airman, idx) => (
-                        <div key={airman.id} className="flex items-center gap-1.5 py-0.5">
-                          <span className="text-slate-400 w-5 text-right font-medium">
-                            {idx + 16}.
-                          </span>
-                          <span className="text-slate-200 font-medium">
-                            {airman.rank} {airman.name}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                    {onParadeAirmen.length > 15 && (
+                      <div className="space-y-1">
+                        {onParadeAirmen.slice(15).map((airman, idx) => (
+                          <div key={airman.id} className="py-0.5 whitespace-nowrap">
+                            <span className="text-slate-400 font-medium">{idx + 16}. </span>
+                            <span className="text-slate-200 font-medium">
+                              {airman.rank} {airman.name}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* Right Column: Duty On (underlined title) */}
+              {/* TDY (Separated from Duty On) */}
               <div>
-                <h4 className="font-bold text-xs text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-                  Duty On
+                <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                  TDY
                 </h4>
 
-                {unitDisposals.length === 0 ? (
-                  <div className="text-slate-500 italic">No airmen on duty</div>
+                {tdyDisposals.length === 0 ? (
+                  <div className="text-slate-500 italic">Nil</div>
                 ) : (
                   <div className="space-y-1">
-                    {unitDisposals.map((disp, idx) => (
-                      <div key={disp.id} className="flex items-center gap-1.5 py-0.5">
-                        <span className="text-slate-400 w-4 text-right font-medium">
-                          {idx + 1}.
+                    {tdyDisposals.map((disp, idx) => (
+                      <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                        <span className="text-slate-400 font-medium">{idx + 1}. </span>
+                        <span className="text-slate-200 font-medium">
+                          {disp.rank} {disp.name} - {formatTdyDetail(disp.detail || disp.displayCategory)}
                         </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Duty On */}
+              <div>
+                <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                  DUTY ON
+                </h4>
+
+                {dutyDisposals.length === 0 ? (
+                  <div className="text-slate-500 italic">Nil</div>
+                ) : (
+                  <div className="space-y-1">
+                    {dutyDisposals.map((disp, idx) => (
+                      <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                        <span className="text-slate-400 font-medium">{idx + 1}. </span>
                         <span className="text-slate-200 font-medium">
                           {disp.rank} {disp.name} - {disp.detail || disp.displayCategory}
                         </span>

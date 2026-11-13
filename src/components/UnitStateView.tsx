@@ -1,6 +1,7 @@
 import React from 'react';
-import { DayState, Airman, DisposalRecord } from '../types/nightCount';
+import { DayState, Airman } from '../types/nightCount';
 import { calculate155SummarizedRow } from '../utils/storage';
+
 interface UnitStateViewProps {
   dayState: DayState;
   onRemoveDisposal?: (id: string) => void;
@@ -11,16 +12,14 @@ interface UnitStateViewProps {
 
 export const UnitStateView: React.FC<UnitStateViewProps> = ({
   dayState,
-  onRemoveDisposal,
-  onToggleAirmanParade,
-  onSelectAirmanForDisposal,
   onUpdateRemarks,
 }) => {
   const summarized = calculate155SummarizedRow(dayState);
 
-  // Group airmen into On Parade and Disposals
-  // Those with active disposals are in Duty On
+  // Separate disposals into TDY (detTdy) and Duty On (all others)
   const unitDisposals = dayState.disposals.filter((d) => d.unit === '155 UASU BAF');
+  const tdyDisposals = unitDisposals.filter((d) => d.category === 'detTdy');
+  const dutyDisposals = unitDisposals.filter((d) => d.category !== 'detTdy');
   const disposalAirmanIds = new Set(unitDisposals.map((d) => d.airmanId).filter(Boolean));
 
   // Airmen who are explicitly on parade
@@ -35,66 +34,76 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
     return val || '-';
   };
 
+  const formatTdyDetail = (detail: string) => {
+    const match = detail.match(/^TDY\s*\(([^)]+)\)$/i);
+    return match ? match[1].trim() : detail;
+  };
+
   const columns = [
-    { key: 'sqnUnit', label: 'Sqn/Unit', width: 'min-w-[120px]' },
-    { key: 'totalStr', label: 'Total Str', width: 'min-w-[42px]' },
-    { key: 'detTdy', label: 'Det/Tdy', width: 'min-w-[40px]' },
-    { key: 'effStr', label: 'Eff Str', width: 'min-w-[42px]' },
-    { key: 'leave', label: 'Leave', width: 'min-w-[36px]' },
-    { key: 'course', label: 'Course', width: 'min-w-[36px]' },
-    { key: 'classExam', label: 'Class/Exam', width: 'min-w-[38px]' },
-    { key: 'awolDetention', label: 'AWOL/Detention', width: 'min-w-[38px]' },
-    { key: 'sickReport', label: 'Sick report', width: 'min-w-[38px]' },
-    { key: 'edExPpgf', label: 'ED/EX PPGF', width: 'min-w-[38px]' },
-    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH/Qmt', width: 'min-w-[44px]' },
-    { key: 'ucUBoard', label: 'U/C, U/Board', width: 'min-w-[38px]' },
-    { key: 'officeDuty', label: 'Office Duty', width: 'min-w-[38px]' },
-    { key: 'aftNiFlgNiDuty', label: 'Aft/Ni flg/Ni Duty', width: 'min-w-[40px]' },
-    { key: 'gdTfAirfieldDuty', label: 'GD/TF/Airfield Duty', width: 'min-w-[42px]' },
-    { key: 'driving', label: 'Driving', width: 'min-w-[36px]' },
-    { key: 'gamesGuardOfHonor', label: 'Games /Guard of Honor', width: 'min-w-[42px]' },
-    { key: 'totalOutParade', label: 'Total Out Parade', width: 'min-w-[44px]' },
-    { key: 'onParade', label: 'On Parade', width: 'min-w-[44px]' },
-    { key: 'remarks', label: 'Remarks', width: 'min-w-[60px]' },
+    { key: 'sqnUnit', label: 'Sqn/Unit' },
+    { key: 'totalStr', label: 'Total Str' },
+    { key: 'detTdy', label: 'Det/Tdy' },
+    { key: 'effStr', label: 'Eff Str' },
+    { key: 'leave', label: 'Leave' },
+    { key: 'course', label: 'Course' },
+    { key: 'classExam', label: 'Class/Exam' },
+    { key: 'awolDetention', label: 'AWOL/Detention' },
+    { key: 'sickReport', label: 'Sick report' },
+    { key: 'edExPpgf', label: 'ED/EX PPGF' },
+    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH/Qmt' },
+    { key: 'ucUBoard', label: 'U/C, U/Board' },
+    { key: 'officeDuty', label: 'Office Duty' },
+    { key: 'aftNiFlgNiDuty', label: 'Aft/Ni flg/Ni Duty' },
+    { key: 'gdTfAirfieldDuty', label: 'GD/TF/Airfield Duty' },
+    { key: 'driving', label: 'Driving' },
+    { key: 'gamesGuardOfHonor', label: 'Games /Guard of Honor' },
+    { key: 'totalOutParade', label: 'Total Out Parade' },
+    { key: 'onParade', label: 'On Parade' },
+    { key: 'remarks', label: 'Remarks' },
   ];
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 pb-12">
-      {/* Outer Military Report Card matching user screenshot 2 */}
+    <div className="w-full max-w-7xl mx-auto px-4 pb-12 text-[12px]">
+      {/* Outer Military Report Card */}
       <div className="bg-[#0b1424] border border-[#1b2a44] rounded-xl p-5 sm:p-7 shadow-2xl relative overflow-hidden">
         {/* Document Header */}
-        <div className="flex flex-col items-center justify-center text-center relative mb-6">
+        <div className="flex flex-col items-center justify-center text-center mb-2">
           <h2 className="text-sm sm:text-base font-bold tracking-wider text-slate-100 uppercase underline decoration-slate-400 underline-offset-4">
             NT COUNT STATE: AIRMEN
           </h2>
           <h3 className="text-sm sm:text-base font-bold tracking-wider text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mt-0.5">
             155 UASU BAF
           </h3>
-
-          <div className="w-full flex justify-end mt-2 sm:mt-0 sm:absolute sm:right-0 sm:top-0">
-            <span className="text-xs sm:text-sm font-semibold text-slate-200">
-              Date: {dayState.formattedDisplayDate}
-            </span>
-          </div>
         </div>
 
-        {/* The Military State Table */}
-        <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] mb-8">
-          <table className="w-full text-xs text-center border-collapse">
+        {/* Date immediately above top-right corner of the table */}
+        <div className="flex justify-end mb-1.5">
+          <span className="text-[12px] font-semibold text-slate-200">
+            Date: {dayState.formattedDisplayDate}
+          </span>
+        </div>
+
+        {/* The Military State Table - Autofit Columns, 12px Font, Centered Headings */}
+        <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] mb-7">
+          <table className="w-full table-auto text-[12px] text-center border-collapse">
             <thead>
               <tr className="bg-[#0f1b2f] border-b border-slate-700 text-slate-200">
                 {columns.map((col, idx) => (
                   <th
                     key={col.key}
-                    className={`border-r border-slate-700/80 p-1 font-semibold text-[11px] align-bottom pb-2 ${col.width} ${
-                      idx === 0 ? 'text-left pl-3 align-middle py-3' : 'h-36'
+                    className={`border-r last:border-r-0 border-slate-700/80 px-1.5 py-2 font-semibold text-[12px] align-middle text-center whitespace-nowrap ${
+                      idx === 0 ? 'px-3' : 'h-36'
                     }`}
                   >
                     {idx === 0 ? (
-                      col.label
-                    ) : (
-                      <div className="writing-vertical mx-auto max-h-32 text-slate-200 font-medium">
+                      <div className="flex items-center justify-center text-center">
                         {col.label}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center h-full w-full">
+                        <div className="writing-vertical text-slate-200 font-medium text-[12px]">
+                          {col.label}
+                        </div>
                       </div>
                     )}
                   </th>
@@ -102,71 +111,71 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b border-slate-800 text-slate-100 hover:bg-[#122038] transition-colors">
-                <td className="p-2.5 font-bold text-left pl-3 text-slate-100 border-r border-slate-700/80 font-sans text-xs">
+              <tr className="border-b border-slate-800 text-slate-100 hover:bg-[#122038] transition-colors text-[12px]">
+                <td className="px-3 py-2.5 font-bold text-center whitespace-nowrap text-slate-100 border-r border-slate-700/80">
                   155 UASU BAF
                 </td>
-                <td className="p-2 border-r border-slate-700/80 font-bold text-slate-100">
+                <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-slate-100 whitespace-nowrap">
                   {displayVal(summarized.totalStr)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.detTdy)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 font-bold text-emerald-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-emerald-400 whitespace-nowrap">
                   {displayVal(summarized.effStr)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.leave)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.course)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.classExam)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.awolDetention)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.sickReport)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.edExPpgf)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.cmhBnsBshQmt)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.ucUBoard)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 font-semibold text-amber-300">
+                <td className="px-2 py-2 border-r border-slate-700/80 font-semibold text-amber-300 whitespace-nowrap">
                   {displayVal(summarized.officeDuty)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.aftNiFlgNiDuty)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.gdTfAirfieldDuty)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.driving)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 text-slate-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 text-slate-400 whitespace-nowrap">
                   {displayVal(summarized.gamesGuardOfHonor)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 font-bold text-rose-400">
+                <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-rose-400 whitespace-nowrap">
                   {displayVal(summarized.totalOutParade)}
                 </td>
-                <td className="p-2 border-r border-slate-700/80 font-bold text-emerald-400 text-sm">
+                <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-emerald-400 whitespace-nowrap">
                   {displayVal(summarized.onParade)}
                 </td>
-                <td className="p-1 text-slate-300 text-xs">
+                <td className="px-2 py-1 text-slate-300 text-[12px] whitespace-nowrap">
                   <input
                     type="text"
                     value={dayState.customRemarks || ''}
                     placeholder="Nil"
                     onChange={(e) => onUpdateRemarks(e.target.value)}
-                    className="w-full bg-transparent px-1 py-0.5 text-center text-slate-300 placeholder:text-slate-600 focus:outline-none focus:bg-slate-800/60 rounded"
+                    className="w-20 bg-transparent px-1 py-0.5 text-center text-[12px] text-slate-300 placeholder:text-slate-600 focus:outline-none focus:bg-slate-800/60 rounded"
                   />
                 </td>
               </tr>
@@ -174,16 +183,16 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
           </table>
         </div>
 
-        {/* Nominal Roll Breakdown matching 1st Pic (image_b3bbea17.png) */}
-        <div className="flex flex-row flex-wrap gap-x-12 sm:gap-x-16 gap-y-6 text-xs text-slate-200">
-          {/* Left: On Parade */}
+        {/* Nominal Roll Breakdown: On Parade, TDY, and Duty On (12px font size) */}
+        <div className="flex flex-row flex-wrap gap-x-12 sm:gap-x-16 gap-y-6 text-[12px] text-slate-200">
+          {/* Section 1: On Parade */}
           <div>
-            <h4 className="font-bold text-xs text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-              On Parade
+            <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+              ON PARADE
             </h4>
 
             {onParadeAirmen.length === 0 ? (
-              <div className="text-slate-500 italic">No airmen on parade</div>
+              <div className="text-slate-500 italic">Nil</div>
             ) : (
               <div className="flex flex-row gap-6 sm:gap-10">
                 {/* Sub-Column 1: 1 to 15 */}
@@ -199,31 +208,55 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
                 </div>
 
                 {/* Sub-Column 2: 16 onwards */}
-                <div className="space-y-1">
-                  {onParadeAirmen.slice(15).map((airman, idx) => (
-                    <div key={airman.id} className="py-0.5 whitespace-nowrap">
-                      <span className="text-slate-400 font-medium">{idx + 16}. </span>
-                      <span className="text-slate-200 font-medium">
-                        {airman.rank} {airman.name}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                {onParadeAirmen.length > 15 && (
+                  <div className="space-y-1">
+                    {onParadeAirmen.slice(15).map((airman, idx) => (
+                      <div key={airman.id} className="py-0.5 whitespace-nowrap">
+                        <span className="text-slate-400 font-medium">{idx + 16}. </span>
+                        <span className="text-slate-200 font-medium">
+                          {airman.rank} {airman.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
 
-          {/* Right: Duty On */}
+          {/* Section 2: TDY (Separated from Duty On) */}
           <div>
-            <h4 className="font-bold text-xs text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-              Duty On
+            <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+              TDY
             </h4>
 
-            {unitDisposals.length === 0 ? (
-              <div className="text-slate-500 italic">No airmen on duty</div>
+            {tdyDisposals.length === 0 ? (
+              <div className="text-slate-500 italic">Nil</div>
             ) : (
               <div className="space-y-1">
-                {unitDisposals.map((disp, idx) => (
+                {tdyDisposals.map((disp, idx) => (
+                  <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                    <span className="text-slate-400 font-medium">{idx + 1}. </span>
+                    <span className="text-slate-200 font-medium">
+                      {disp.rank} {disp.name} - {formatTdyDetail(disp.detail || disp.displayCategory)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Section 3: Duty On */}
+          <div>
+            <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+              DUTY ON
+            </h4>
+
+            {dutyDisposals.length === 0 ? (
+              <div className="text-slate-500 italic">Nil</div>
+            ) : (
+              <div className="space-y-1">
+                {dutyDisposals.map((disp, idx) => (
                   <div key={disp.id} className="py-0.5 whitespace-nowrap">
                     <span className="text-slate-400 font-medium">{idx + 1}. </span>
                     <span className="text-slate-200 font-medium">
