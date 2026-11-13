@@ -1,9 +1,34 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Users, ChevronUp, ChevronDown, Plus, Search, Edit3, Trash2, Check, X, AlertCircle } from 'lucide-react';
+import {
+  Users,
+  ChevronUp,
+  ChevronDown,
+  Plus,
+  Search,
+  Edit3,
+  Trash2,
+  Check,
+  X,
+  AlertCircle,
+  FileSpreadsheet,
+  Upload,
+  Download,
+} from 'lucide-react';
 import { Airman, DayState, Rank } from '../types/nightCount';
-import { DISPOSAL_OPTIONS, BAF_TRADES, BAF_FLIGHTS } from '../data/initialData';
-import { loadSavedCustomDisposals, getUnitAirmen } from '../utils/storage';
+import { DISPOSAL_OPTIONS, BAF_TRADES, BAF_FLIGHTS, BAF_RANKS_SELECT } from '../data/initialData';
+import {
+  loadSavedCustomDisposals,
+  getUnitAirmen,
+  getAllExistingBdUnitMap,
+  findExistingBdConflict,
+} from '../utils/storage';
+import {
+  ParsedExcelAirmanRow,
+  buildAirmenFromParsedRows,
+  downloadSampleAirmenExcel,
+  parseAirmenExcelFile,
+} from '../utils/excelImport';
 
 interface NominalRollViewProps {
   unitName?: string;
@@ -11,6 +36,7 @@ interface NominalRollViewProps {
   onUpdateAirmanDisposal: (airmanId: string, disposalVal: string) => void;
   onUpdateAirmanFull: (updatedAirman: Airman, disposalVal: string) => void;
   onAddAirman: (airman: Omit<Airman, 'id'>) => void;
+  onAddAirmenBulk: (airmen: Omit<Airman, 'id'>[]) => void;
   onDeleteAirman: (airmanId: string) => void;
   onDeleteCustomDisposal: (customName: string) => void;
 }
@@ -264,6 +290,7 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   onUpdateAirmanDisposal,
   onUpdateAirmanFull,
   onAddAirman,
+  onAddAirmenBulk,
   onDeleteAirman,
   onDeleteCustomDisposal,
 }) => {
@@ -271,6 +298,7 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
+  const [addMode, setAddMode] = useState<'single' | 'bulk'>('single');
 
   // Edit Airman Modal state
   const [editingAirman, setEditingAirman] = useState<Airman | null>(null);
@@ -279,6 +307,9 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   const [editName, setEditName] = useState('');
   const [editTrade, setEditTrade] = useState('');
   const [editFlight, setEditFlight] = useState('GCS');
+  const [isCustomEditTrade, setIsCustomEditTrade] = useState(false);
+  const [isCustomEditFlight, setIsCustomEditFlight] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // New airman form state - DEFAULT A KONO OPTION FILLUP THAKBE NA
   const [newName, setNewName] = useState('');
@@ -286,7 +317,15 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   const [newTrade, setNewTrade] = useState<string>('');
   const [newFlight, setNewFlight] = useState<string>('');
   const [newBdNo, setNewBdNo] = useState('');
+  const [isCustomNewTrade, setIsCustomNewTrade] = useState(false);
+  const [isCustomNewFlight, setIsCustomNewFlight] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+
+  // Bulk Excel import state
+  const [bulkRows, setBulkRows] = useState<ParsedExcelAirmanRow[]>([]);
+  const [bulkFileName, setBulkFileName] = useState<string>('');
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const excelInputRef = useRef<HTMLInputElement>(null);
 
   // Custom disposal modal state
   const [customModalAirman, setCustomModalAirman] = useState<Airman | null>(null);
@@ -330,8 +369,46 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
     return list;
   }, [dayState.savedCustomDisposals, disposals]);
 
-  // Flights filter options
-  const flightOptions = ['All', 'Mechanics', 'Avionics', 'GCS', 'Admin'];
+  // Dynamic Trades & Flights (preset + any custom values present in the unit)
+  const availableTrades = useMemo(() => {
+    const set = new Set<string>(BAF_TRADES);
+    airmen.forEach((a) => {
+      if (a.trade?.trim()) set.add(a.trade.trim());
+    });
+    return Array.from(set);
+  }, [airmen]);
+
+  const availableFlights = useMemo(() => {
+    const set = new Set<string>(BAF_FLIGHTS);
+    airmen.forEach((a) => {
+      if (a.flight?.trim()) set.add(a.flight.trim());
+    });
+    return Array.from(set);
+  }, [airmen]);
+
+  // Flights filter options: strictly ONLY flights present in this unit's Nominal Roll
+  const nominalRollFlights = useMemo(() => {
+    const present = new Set<string>();
+    const customList: string[] = [];
+    airmen.forEach((a) => {
+      const f = a.flight?.trim();
+      if (!f || present.has(f)) return;
+      present.add(f);
+      if (!BAF_FLIGHTS.includes(f)) {
+        customList.push(f);
+      }
+    });
+    const orderedPresets = BAF_FLIGHTS.filter((f) => present.has(f));
+    return [...orderedPresets, ...customList];
+  }, [airmen]);
+
+  useEffect(() => {
+    if (selectedFlight !== 'All' && !nominalRollFlights.includes(selectedFlight)) {
+      setSelectedFlight('All');
+    }
+  }, [selectedFlight, nominalRollFlights]);
+
+  const flightOptions = useMemo(() => ['All', ...nominalRollFlights], [nominalRollFlights]);
 
   // Filter airmen based only on Flight and Search (Rank filter removed as requested)
   const filteredAirmen = useMemo(() => {
@@ -357,13 +434,51 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
 
   // Open Add Airman modal with all fields completely blank
   const handleOpenAddModal = () => {
+    setAddMode('single');
     setNewName('');
     setNewRank('');
     setNewTrade('');
     setNewFlight('');
     setNewBdNo('');
+    setIsCustomNewTrade(false);
+    setIsCustomNewFlight(false);
     setAddError(null);
+    setBulkRows([]);
+    setBulkFileName('');
+    setBulkError(null);
     setShowAddModal(true);
+  };
+
+  // Handle Excel / CSV file selection for bulk upload
+  const handleExcelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBulkError(null);
+    setBulkFileName(file.name);
+    try {
+      const existingBdUnitMap = getAllExistingBdUnitMap(dayState);
+      const parsed = await parseAirmenExcelFile(file, existingBdUnitMap);
+      setBulkRows(parsed);
+    } catch (err) {
+      setBulkRows([]);
+      setBulkError(err instanceof Error ? err.message : 'Failed to read Excel file.');
+    } finally {
+      if (excelInputRef.current) {
+        excelInputRef.current.value = '';
+      }
+    }
+  };
+
+  const validBulkRows = useMemo(() => bulkRows.filter((r) => !r.error), [bulkRows]);
+
+  const handleBulkImportSubmit = () => {
+    if (validBulkRows.length === 0) return;
+    const toAdd = buildAirmenFromParsedRows(validBulkRows, unitName);
+    onAddAirmenBulk(toAdd);
+    setBulkRows([]);
+    setBulkFileName('');
+    setBulkError(null);
+    setShowAddModal(false);
   };
 
   // Handle clicking a row to edit
@@ -374,67 +489,105 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
     setEditName(airman.name);
     setEditTrade(airman.trade || '');
     setEditFlight(airman.flight || 'Admin');
+    setIsCustomEditTrade(false);
+    setIsCustomEditFlight(false);
+    setEditError(null);
   };
 
   // Save edited airman
   const handleSaveEditAirman = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingAirman || !editName.trim()) return;
+    if (!editingAirman) return;
+    setEditError(null);
+
+    const cleanBd = editBdNo.trim();
+    const cleanName = editName.trim();
+    const cleanTrade = editTrade.trim();
+    const cleanFlight = editFlight.trim() || 'Admin';
+
+    if (!/^\d{6}$/.test(cleanBd)) {
+      setEditError('BD must be exactly 6 digits (numbers only, e.g. 474455).');
+      return;
+    }
+
+    const bdConflict = findExistingBdConflict(dayState, cleanBd, editingAirman.id);
+    if (bdConflict) {
+      setEditError(
+        `BD ${cleanBd} already exists in ${bdConflict.unit} (${bdConflict.airman.rank} ${bdConflict.airman.name}). Same BD cannot be in two offices.`
+      );
+      return;
+    }
+
+    if (!cleanName) {
+      setEditError('Name is required.');
+      return;
+    }
 
     // Preserve the current disposal chosen from outside
     const currDisp = airmanDisposalMap.get(editingAirman.id) || (editingAirman.currentDuty || '-');
 
     const updated: Airman = {
       ...editingAirman,
-      bdNo: editBdNo.trim(),
+      bdNo: cleanBd,
       rank: editRank,
-      name: editName.trim(), // short name
-      trade: editTrade.trim(),
-      flight: editFlight,
+      name: cleanName, // short name
+      trade: cleanTrade,
+      flight: cleanFlight,
     };
 
     onUpdateAirmanFull(updated, currDisp);
     setEditingAirman(null);
   };
 
-  // Submit new airman - ALL OPTIONS MUST BE FILLED & BD NO MUST BE EXACTLY 6 DIGITS
+  // Submit new airman - ALL OPTIONS MUST BE FILLED & BD MUST BE EXACTLY 6 DIGITS & UNIQUE ACROSS ALL OFFICES
   const handleAddNewAirmanSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setAddError(null);
 
     const cleanBd = newBdNo.trim();
     const cleanName = newName.trim();
+    const cleanTrade = newTrade.trim();
+    const cleanFlight = newFlight.trim();
 
     if (!cleanBd) {
-      setAddError('BD Number is required and must be 6 digits.');
+      setAddError('BD is required and must be 6 digits.');
       return;
     }
     if (!/^\d{6}$/.test(cleanBd)) {
-      setAddError('BD Number must be exactly 6 digits (numbers only, e.g. 474455).');
+      setAddError('BD must be exactly 6 digits (numbers only, e.g. 474455).');
       return;
     }
+
+    const bdConflict = findExistingBdConflict(dayState, cleanBd);
+    if (bdConflict) {
+      setAddError(
+        `BD ${cleanBd} already exists in ${bdConflict.unit} (${bdConflict.airman.rank} ${bdConflict.airman.name}). Same BD cannot be in two offices.`
+      );
+      return;
+    }
+
     if (!newRank) {
       setAddError('Please select a Rank.');
       return;
     }
     if (!cleanName) {
-      setAddError('Please enter a Short Name.');
+      setAddError('Please enter Name.');
       return;
     }
-    if (!newTrade) {
-      setAddError('Please select a Trade.');
+    if (!cleanTrade) {
+      setAddError('Please select or enter a Trade.');
       return;
     }
-    if (!newFlight) {
-      setAddError('Please select a Flight.');
+    if (!cleanFlight) {
+      setAddError('Please select or enter a Flight.');
       return;
     }
 
     onAddAirman({
       name: cleanName,
       rank: newRank as Rank,
-      trade: newTrade,
-      flight: newFlight,
+      trade: cleanTrade,
+      flight: cleanFlight,
       bdNo: cleanBd,
       unit: unitName,
       status: 'on_parade',
@@ -445,6 +598,8 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
     setNewTrade('');
     setNewFlight('');
     setNewBdNo('');
+    setIsCustomNewTrade(false);
+    setIsCustomNewFlight(false);
     setShowAddModal(false);
   };
 
@@ -654,10 +809,17 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
             </div>
 
             <form onSubmit={handleSaveEditAirman} className="space-y-3.5 text-xs">
+              {editError && (
+                <div className="p-2.5 rounded bg-rose-950/70 border border-rose-800/80 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{editError}</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-slate-300 font-semibold">BD Number *</label>
+                    <label className="text-slate-300 font-semibold">BD *</label>
                     <span className="text-[10px] text-slate-500 font-sans">{editBdNo.length}/6</span>
                   </div>
                   <input
@@ -666,9 +828,12 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                     maxLength={6}
                     required
                     value={editBdNo}
-                    onChange={(e) => setEditBdNo(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="e.g. 474455"
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500 font-sans"
+                    onChange={(e) => {
+                      setEditBdNo(e.target.value.replace(/\D/g, '').slice(0, 6));
+                      setEditError(null);
+                    }}
+                    placeholder="474455"
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-sans"
                   />
                   <p className="text-[10px] text-slate-500 mt-0.5">Must be 6 digits</p>
                 </div>
@@ -685,7 +850,7 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                     <option value="AC">AC</option>
                     <option value="AC-1">AC-1</option>
                     <option value="AC-2">AC-2</option>
-                    <option value="Sgt">Sgt</option>
+                    {editingAirman.rank === 'Sgt' && <option value="Sgt">Sgt</option>}
                     <option value="Flt Sgt">Flt Sgt</option>
                     <option value="WO">WO</option>
                     <option value="MWO">MWO</option>
@@ -695,51 +860,118 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
 
               <div>
                 <label className="text-slate-300 block mb-1 font-semibold">
-                  Name (Short Name only, e.g. Rasel, Akash, Omar) *
+                  Name *
                 </label>
                 <input
                   type="text"
                   required
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  placeholder="e.g. Rasel"
-                  className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                  placeholder="Rasel"
+                  className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">Trade *</label>
-                  <select
-                    required
-                    value={editTrade}
-                    onChange={(e) => setEditTrade(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500 cursor-pointer"
-                  >
-                    {!BAF_TRADES.includes(editTrade) && editTrade && (
-                      <option value={editTrade}>{editTrade}</option>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-slate-300 font-semibold">Trade *</label>
+                    {isCustomEditTrade && (
+                      <button
+                        type="button"
+                        onClick={() => setIsCustomEditTrade(false)}
+                        className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                      >
+                        Choose from list
+                      </button>
                     )}
-                    {BAF_TRADES.map((t) => (
-                      <option key={t} value={t} className="bg-[#0b1424] text-slate-200">
-                        {t}
+                  </div>
+                  {isCustomEditTrade ? (
+                    <input
+                      type="text"
+                      required
+                      value={editTrade}
+                      onChange={(e) => setEditTrade(e.target.value)}
+                      placeholder="Enter Trade"
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  ) : (
+                    <select
+                      required
+                      value={editTrade}
+                      onChange={(e) => {
+                        if (e.target.value === '__CUSTOM__') {
+                          setIsCustomEditTrade(true);
+                          setEditTrade('');
+                        } else {
+                          setEditTrade(e.target.value);
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      {!availableTrades.includes(editTrade) && editTrade && (
+                        <option value={editTrade}>{editTrade}</option>
+                      )}
+                      {availableTrades.map((t) => (
+                        <option key={t} value={t} className="bg-[#0b1424] text-slate-200">
+                          {t}
+                        </option>
+                      ))}
+                      <option value="__CUSTOM__" className="bg-[#0b1424] text-emerald-400 font-semibold">
+                        + Custom Trade...
                       </option>
-                    ))}
-                  </select>
+                    </select>
+                  )}
                 </div>
 
                 <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">Flight *</label>
-                  <select
-                    value={editFlight}
-                    onChange={(e) => setEditFlight(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500 cursor-pointer"
-                  >
-                    {BAF_FLIGHTS.map((f) => (
-                      <option key={f} value={f} className="bg-[#0b1424] text-slate-200">
-                        {f}
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-slate-300 font-semibold">Flight *</label>
+                    {isCustomEditFlight && (
+                      <button
+                        type="button"
+                        onClick={() => setIsCustomEditFlight(false)}
+                        className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                      >
+                        Choose from list
+                      </button>
+                    )}
+                  </div>
+                  {isCustomEditFlight ? (
+                    <input
+                      type="text"
+                      required
+                      value={editFlight}
+                      onChange={(e) => setEditFlight(e.target.value)}
+                      placeholder="Enter Flight"
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  ) : (
+                    <select
+                      value={editFlight}
+                      onChange={(e) => {
+                        if (e.target.value === '__CUSTOM__') {
+                          setIsCustomEditFlight(true);
+                          setEditFlight('');
+                        } else {
+                          setEditFlight(e.target.value);
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      {!availableFlights.includes(editFlight) && editFlight && (
+                        <option value={editFlight}>{editFlight}</option>
+                      )}
+                      {availableFlights.map((f) => (
+                        <option key={f} value={f} className="bg-[#0b1424] text-slate-200">
+                          {f}
+                        </option>
+                      ))}
+                      <option value="__CUSTOM__" className="bg-[#0b1424] text-emerald-400 font-semibold">
+                        + Custom Flight...
                       </option>
-                    ))}
-                  </select>
+                    </select>
+                  )}
                 </div>
               </div>
 
@@ -779,15 +1011,21 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
         </div>
       )}
 
-      {/* Add Airman Modal (Default a kono option fillup thakbe na, All options must be filled, BD No must be 6 digits) */}
+      {/* Add Airman Modal (Single Airman + Bulk Excel Upload) */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-[#0b1424] border border-slate-700 w-full max-w-md rounded-xl shadow-2xl p-5 text-slate-200">
+          <div
+            className={`bg-[#0b1424] border border-slate-700 w-full rounded-xl shadow-2xl p-5 text-slate-200 transition-all ${
+              addMode === 'bulk' ? 'max-w-2xl' : 'max-w-md'
+            }`}
+          >
             <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
               <div>
                 <h3 className="font-bold text-sm text-slate-100">Add Airman to Nominal Roll</h3>
                 <p className="text-[11px] text-slate-400">
-                  All fields must be filled. BD Number must be exactly 6 digits.
+                  {addMode === 'single'
+                    ? 'All fields must be filled. BD must be exactly 6 digits.'
+                    : 'Upload Excel (.xlsx, .xls) or CSV to add multiple airmen at once.'}
                 </p>
               </div>
               <button
@@ -798,160 +1036,393 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
               </button>
             </div>
 
-            {addError && (
-              <div className="mb-3 p-2.5 rounded bg-rose-950/70 border border-rose-800/80 text-rose-300 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                <span>{addError}</span>
+            {/* Single vs Bulk Excel Mode Switcher */}
+            <div className="inline-flex items-center gap-1 bg-[#070e1b] border border-slate-800 p-1 rounded-lg mb-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setAddMode('single');
+                  setAddError(null);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                  addMode === 'single'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Single Airman</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAddMode('bulk');
+                  setBulkError(null);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                  addMode === 'bulk'
+                    ? 'bg-emerald-600 text-slate-950 font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Bulk Upload (Excel)</span>
+              </button>
+            </div>
+
+            {addMode === 'single' ? (
+              <>
+                {addError && (
+                  <div className="mb-3 p-2.5 rounded bg-rose-950/70 border border-rose-800/80 text-rose-300 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>{addError}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleAddNewAirmanSubmit} className="space-y-3.5 text-xs">
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* BD (Must be exactly 6 digits) */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-slate-300 font-semibold">
+                          BD <span className="text-rose-400">*</span>
+                        </label>
+                        <span className="text-[10px] text-slate-500 font-sans">
+                          {newBdNo.length}/6
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        required
+                        placeholder="474455"
+                        value={newBdNo}
+                        onChange={(e) => {
+                          setNewBdNo(e.target.value.replace(/\D/g, '').slice(0, 6));
+                          setAddError(null);
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-sans"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-0.5">Must be 6 digits</p>
+                    </div>
+
+                    {/* Rank Dropdown (Cpl, LAC, AC, AC-1, AC-2) */}
+                    <div>
+                      <label className="text-slate-300 block mb-1 font-semibold">
+                        Rank <span className="text-rose-400">*</span>
+                      </label>
+                      <select
+                        required
+                        value={newRank}
+                        onChange={(e) => {
+                          setNewRank(e.target.value);
+                          setAddError(null);
+                        }}
+                        className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
+                          !newRank ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                        }`}
+                      >
+                        <option value="" disabled>
+                          Select Rank *
+                        </option>
+                        {BAF_RANKS_SELECT.map((r) => (
+                          <option key={r} value={r} className="bg-[#0b1424] text-slate-200">
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Name */}
+                  <div>
+                    <label className="text-slate-300 block mb-1 font-semibold">
+                      Name <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Shakil"
+                      value={newName}
+                      onChange={(e) => {
+                        setNewName(e.target.value);
+                        setAddError(null);
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Trade (Preset + Custom) */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-slate-300 font-semibold">
+                          Trade <span className="text-rose-400">*</span>
+                        </label>
+                        {isCustomNewTrade && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsCustomNewTrade(false);
+                              setNewTrade('');
+                            }}
+                            className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                          >
+                            Select list
+                          </button>
+                        )}
+                      </div>
+                      {isCustomNewTrade ? (
+                        <input
+                          type="text"
+                          required
+                          placeholder="Enter Trade"
+                          value={newTrade}
+                          onChange={(e) => {
+                            setNewTrade(e.target.value);
+                            setAddError(null);
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                        />
+                      ) : (
+                        <select
+                          required
+                          value={newTrade}
+                          onChange={(e) => {
+                            if (e.target.value === '__CUSTOM__') {
+                              setIsCustomNewTrade(true);
+                              setNewTrade('');
+                            } else {
+                              setNewTrade(e.target.value);
+                            }
+                            setAddError(null);
+                          }}
+                          className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
+                            !newTrade ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                          }`}
+                        >
+                          <option value="" disabled>
+                            Select Trade *
+                          </option>
+                          {availableTrades.map((t) => (
+                            <option key={t} value={t} className="bg-[#0b1424] text-slate-200">
+                              {t}
+                            </option>
+                          ))}
+                          <option
+                            value="__CUSTOM__"
+                            className="bg-[#0b1424] text-emerald-400 font-semibold"
+                          >
+                            + Custom Trade...
+                          </option>
+                        </select>
+                      )}
+                    </div>
+
+                    {/* Flight (Preset + Custom) */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-slate-300 font-semibold">
+                          Flight <span className="text-rose-400">*</span>
+                        </label>
+                        {isCustomNewFlight && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsCustomNewFlight(false);
+                              setNewFlight('');
+                            }}
+                            className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                          >
+                            Select list
+                          </button>
+                        )}
+                      </div>
+                      {isCustomNewFlight ? (
+                        <input
+                          type="text"
+                          required
+                          placeholder="Enter Flight"
+                          value={newFlight}
+                          onChange={(e) => {
+                            setNewFlight(e.target.value);
+                            setAddError(null);
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                        />
+                      ) : (
+                        <select
+                          required
+                          value={newFlight}
+                          onChange={(e) => {
+                            if (e.target.value === '__CUSTOM__') {
+                              setIsCustomNewFlight(true);
+                              setNewFlight('');
+                            } else {
+                              setNewFlight(e.target.value);
+                            }
+                            setAddError(null);
+                          }}
+                          className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
+                            !newFlight ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                          }`}
+                        >
+                          <option value="" disabled>
+                            Select Flight *
+                          </option>
+                          {availableFlights.map((f) => (
+                            <option key={f} value={f} className="bg-[#0b1424] text-slate-200">
+                              {f}
+                            </option>
+                          ))}
+                          <option
+                            value="__CUSTOM__"
+                            className="bg-[#0b1424] text-emerald-400 font-semibold"
+                          >
+                            + Custom Flight...
+                          </option>
+                        </select>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-3 flex justify-end gap-2 border-t border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddModal(false)}
+                      className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded cursor-pointer shadow transition-all"
+                    >
+                      Add Airman
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <div className="space-y-3.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-[#070e1b] border border-slate-800">
+                  <div className="text-[11px] text-slate-300">
+                    <span className="font-semibold text-white">Columns:</span>{' '}
+                    <span className="text-slate-300 font-semibold">Ser No</span>,{' '}
+                    <span className="text-emerald-400 font-semibold">BD</span>,{' '}
+                    <span className="text-emerald-400 font-semibold">Rank</span>,{' '}
+                    <span className="text-emerald-400 font-semibold">Name</span>,{' '}
+                    <span className="text-emerald-400 font-semibold">Trade</span>,{' '}
+                    <span className="text-emerald-400 font-semibold">Flight</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={downloadSampleAirmenExcel}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Sample Excel</span>
+                  </button>
+                </div>
+
+                {/* File Input */}
+                <label className="flex flex-col items-center justify-center gap-1.5 p-5 border-2 border-dashed border-slate-700 hover:border-emerald-500/60 rounded-xl bg-[#070e1b]/60 cursor-pointer transition-colors">
+                  <Upload className="w-5 h-5 text-emerald-400" />
+                  <span className="font-semibold text-slate-200">
+                    {bulkFileName ? bulkFileName : 'Click to choose Excel (.xlsx, .xls) or CSV file'}
+                  </span>
+                  <span className="text-[11px] text-slate-400 text-center">
+                    Any Trade or Flight in your Excel file will be imported &amp; sorted by Rank &amp; BD seniority
+                  </span>
+                  <input
+                    ref={excelInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleExcelFileChange}
+                    className="hidden"
+                  />
+                </label>
+
+                {bulkError && (
+                  <div className="p-2.5 rounded bg-rose-950/70 border border-rose-800/80 text-rose-300 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>{bulkError}</span>
+                  </div>
+                )}
+
+                {bulkRows.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-emerald-400 font-semibold">
+                        {validBulkRows.length} valid airmen ready to import (auto-sorted by Rank &amp; BD)
+                      </span>
+                      {bulkRows.length - validBulkRows.length > 0 && (
+                        <span className="text-amber-400 font-semibold">
+                          {bulkRows.length - validBulkRows.length} row(s) skipped due to errors
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="max-h-56 overflow-auto border border-slate-800 rounded-lg bg-[#070e1b]">
+                      <table className="w-full text-[11px] text-left border-collapse">
+                        <thead className="bg-slate-900/90 text-slate-400 sticky top-0">
+                          <tr className="border-b border-slate-800">
+                            <th className="py-2 px-2.5">Ser No</th>
+                            <th className="py-2 px-2.5">BD</th>
+                            <th className="py-2 px-2.5">Rank</th>
+                            <th className="py-2 px-2.5">Name</th>
+                            <th className="py-2 px-2.5">Trade</th>
+                            <th className="py-2 px-2.5">Flight</th>
+                            <th className="py-2 px-2.5">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60">
+                          {bulkRows.map((row) => (
+                            <tr
+                              key={row.rowNumber}
+                              className={row.error ? 'bg-rose-950/20 text-rose-300' : 'text-slate-200'}
+                            >
+                              <td className="py-1.5 px-2.5 text-slate-400">{row.serNo || row.rowNumber - 1}</td>
+                              <td className="py-1.5 px-2.5 font-semibold">{row.bdNo || '-'}</td>
+                              <td className="py-1.5 px-2.5">{row.rank || row.rawRank || '-'}</td>
+                              <td className="py-1.5 px-2.5">{row.name || '-'}</td>
+                              <td className="py-1.5 px-2.5">{row.trade || '-'}</td>
+                              <td className="py-1.5 px-2.5">{row.flight || '-'}</td>
+                              <td className="py-1.5 px-2.5">
+                                {row.error ? (
+                                  <span className="text-rose-400 font-medium">{row.error}</span>
+                                ) : (
+                                  <span className="text-emerald-400 font-semibold">Valid</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-3 flex justify-end gap-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={validBulkRows.length === 0}
+                    onClick={handleBulkImportSubmit}
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-slate-950 font-bold rounded cursor-pointer shadow transition-all"
+                  >
+                    Import {validBulkRows.length > 0 ? `${validBulkRows.length} ` : ''}Airmen
+                  </button>
+                </div>
               </div>
             )}
-
-            <form onSubmit={handleAddNewAirmanSubmit} className="space-y-3.5 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                {/* BD Number (Must be exactly 6 digits) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-slate-300 font-semibold">
-                      BD Number <span className="text-rose-400">*</span>
-                    </label>
-                    <span className="text-[10px] text-slate-500 font-sans">
-                      {newBdNo.length}/6
-                    </span>
-                  </div>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    required
-                    placeholder="e.g. 474455"
-                    value={newBdNo}
-                    onChange={(e) => {
-                      setNewBdNo(e.target.value.replace(/\D/g, '').slice(0, 6));
-                      setAddError(null);
-                    }}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-sans"
-                  />
-                  <p className="text-[10px] text-slate-500 mt-0.5">Must be 6 digits</p>
-                </div>
-
-                {/* Rank Dropdown (Cpl, LAC, AC) */}
-                <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">
-                    Rank <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    required
-                    value={newRank}
-                    onChange={(e) => {
-                      setNewRank(e.target.value);
-                      setAddError(null);
-                    }}
-                    className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                      !newRank ? 'text-slate-500' : 'text-slate-100 font-semibold'
-                    }`}
-                  >
-                    <option value="" disabled>
-                      Select Rank *
-                    </option>
-                    <option value="Cpl" className="bg-[#0b1424] text-slate-200">Cpl</option>
-                    <option value="LAC" className="bg-[#0b1424] text-slate-200">LAC</option>
-                    <option value="AC" className="bg-[#0b1424] text-slate-200">AC</option>
-                    <option value="AC-1" className="bg-[#0b1424] text-slate-200">AC-1</option>
-                    <option value="AC-2" className="bg-[#0b1424] text-slate-200">AC-2</option>
-                    <option value="Sgt" className="bg-[#0b1424] text-slate-200">Sgt</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Name (Short Name only) */}
-              <div>
-                <label className="text-slate-300 block mb-1 font-semibold">
-                  Name (Short Name only, e.g. Shakil) <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Shakil"
-                  value={newName}
-                  onChange={(e) => {
-                    setNewName(e.target.value);
-                    setAddError(null);
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                {/* Trade Dropdown matching Pic 3 */}
-                <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">
-                    Trade <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    required
-                    value={newTrade}
-                    onChange={(e) => {
-                      setNewTrade(e.target.value);
-                      setAddError(null);
-                    }}
-                    className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                      !newTrade ? 'text-slate-500' : 'text-slate-100 font-semibold'
-                    }`}
-                  >
-                    <option value="" disabled>
-                      Select Trade *
-                    </option>
-                    {BAF_TRADES.map((t) => (
-                      <option key={t} value={t} className="bg-[#0b1424] text-slate-200">
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Flight Dropdown */}
-                <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">
-                    Flight <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    required
-                    value={newFlight}
-                    onChange={(e) => {
-                      setNewFlight(e.target.value);
-                      setAddError(null);
-                    }}
-                    className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                      !newFlight ? 'text-slate-500' : 'text-slate-100 font-semibold'
-                    }`}
-                  >
-                    <option value="" disabled>
-                      Select Flight *
-                    </option>
-                    {BAF_FLIGHTS.map((f) => (
-                      <option key={f} value={f} className="bg-[#0b1424] text-slate-200">
-                        {f}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="pt-3 flex justify-end gap-2 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded cursor-pointer shadow transition-all"
-                >
-                  Add Airman
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

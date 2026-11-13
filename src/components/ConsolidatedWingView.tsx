@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DayState, UnitRowState } from '../types/nightCount';
 import {
   calculateUnitSummarizedRow,
@@ -16,6 +16,7 @@ interface ConsolidatedWingViewProps {
   onSelectUnit: (unitName: string) => void;
   onAddCustomDisposal: (customName: string) => void;
   onDeleteCustomDisposal: (customName: string) => void;
+  onSettingsChanged?: () => void;
 }
 
 const STANDARD_DISPOSAL_ITEMS = DISPOSAL_OPTIONS.filter((o) => o.value !== '-');
@@ -27,6 +28,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   onSelectUnit,
   onAddCustomDisposal,
   onDeleteCustomDisposal,
+  onSettingsChanged,
 }) => {
   const [editingSqn, setEditingSqn] = useState<string | null>(null);
   const [editTotalStr, setEditTotalStr] = useState<number>(0);
@@ -36,6 +38,13 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   const [hiddenDisposals, setHiddenDisposals] = useState<string[]>(() =>
     loadHiddenQuickEditDisposals().filter((k) => !ALWAYS_VISIBLE_DISPOSALS.has(k))
   );
+  useEffect(() => {
+    if (!editingSqn) {
+      setHiddenDisposals(
+        loadHiddenQuickEditDisposals().filter((k) => !ALWAYS_VISIBLE_DISPOSALS.has(k))
+      );
+    }
+  }, [dayState, editingSqn]);
   const [showHiddenDrawer, setShowHiddenDrawer] = useState<boolean>(false);
   const [isAddingCustom, setIsAddingCustom] = useState<boolean>(false);
   const [newCustomName, setNewCustomName] = useState<string>('');
@@ -273,6 +282,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     setHiddenDisposals((prev) => {
       const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
       saveHiddenQuickEditDisposals(next);
+      onSettingsChanged?.();
       return next;
     });
   };
@@ -290,6 +300,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
       if (!prev.includes(trimmed)) return prev;
       const next = prev.filter((k) => k !== trimmed);
       saveHiddenQuickEditDisposals(next);
+      onSettingsChanged?.();
       return next;
     });
     setNewCustomName('');

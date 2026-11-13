@@ -24,10 +24,33 @@ import {
   loadUiPrefs,
   saveUiPrefs,
   savePreparedByStorage,
+  loadHiddenQuickEditDisposals,
+  saveHiddenQuickEditDisposals,
+  normalizeDayState,
+  sortAirmenBySeniority,
+  findExistingBdConflict,
+  getAllExistingBdUnitMap,
 } from './utils/storage';
+import {
+  auth,
+  ensureAnonymousAuth,
+  onAuthStateChanged,
+  testFirestoreConnection,
+} from './firebase';
+import {
+  computeDayFingerprint,
+  computeSettingsFingerprint,
+  downloadDayFromCloud,
+  downloadFromCloudOnEnter,
+  uploadDayToCloud,
+  uploadSettingsToCloud,
+  type CloudSettings,
+} from './utils/firebaseSync';
 import { DISPOSAL_OPTIONS } from './data/initialData';
 import { FileSpreadsheet, Users, UserCheck } from 'lucide-react';
 import { OfflineIndicator } from './components/OfflineIndicator';
+
+const CLOUD_UPLOAD_DEBOUNCE_MS = 8000; // Always completes within 10 seconds of data change
 
 export default function App() {
   const initialPrefs = React.useMemo(() => loadUiPrefs(), []);
@@ -40,27 +63,259 @@ export default function App() {
   const [isPreparedByOpen, setIsPreparedByOpen] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
 
+  // Cloud sync refs (ensures zero uploads unless data actually changed)
+  const syncedDayHashesRef = React.useRef<Map<string, string>>(new Map());
+  const syncedSettingsHashRef = React.useRef<string | null>(null);
+  const dirtyDaysRef = React.useRef<Map<string, DayState>>(new Map());
+  const dirtySettingsRef = React.useRef<CloudSettings | null>(null);
+  const fetchedCloudDatesRef = React.useRef<Set<string>>(new Set());
+  const userEditedDatesRef = React.useRef<Set<string>>(new Set());
+  const uploadTimerRef = React.useRef<number | null>(null);
+  const isFlushingRef = React.useRef<boolean>(false);
+
+  const flushCloudUploads = React.useCallback(async () => {
+    if (uploadTimerRef.current !== null) {
+      window.clearTimeout(uploadTimerRef.current);
+      uploadTimerRef.current = null;
+    }
+    if (isFlushingRef.current) return;
+
+    const hasDirtyDays = dirtyDaysRef.current.size > 0;
+    const hasDirtySettings = dirtySettingsRef.current !== null;
+    if (!hasDirtyDays && !hasDirtySettings) return;
+
+    const currentUser = auth.currentUser ?? (await ensureAnonymousAuth());
+    if (!currentUser) {
+      return;
+    }
+
+    isFlushingRef.current = true;
+    try {
+      const daysToUpload = Array.from(dirtyDaysRef.current.entries());
+      for (const [dIso, dState] of daysToUpload) {
+        const nextHash = computeDayFingerprint(dState);
+        if (syncedDayHashesRef.current.get(dIso) === nextHash) {
+          dirtyDaysRef.current.delete(dIso);
+          continue;
+        }
+        await uploadDayToCloud(dState);
+        syncedDayHashesRef.current.set(dIso, nextHash);
+        dirtyDaysRef.current.delete(dIso);
+      }
+
+      if (dirtySettingsRef.current) {
+        const pendingSettings = dirtySettingsRef.current;
+        const nextSettingsHash = computeSettingsFingerprint(pendingSettings);
+        if (syncedSettingsHashRef.current !== nextSettingsHash) {
+          await uploadSettingsToCloud(pendingSettings);
+          syncedSettingsHashRef.current = nextSettingsHash;
+        }
+        dirtySettingsRef.current = null;
+      }
+    } catch (err) {
+      if (!(err instanceof Error && err.message === 'AUTH_REQUIRED')) {
+        console.error('Cloud upload deferred:', err);
+      }
+    } finally {
+      isFlushingRef.current = false;
+    }
+  }, []);
+
+  const scheduleCloudUpload = React.useCallback(() => {
+    if (dirtyDaysRef.current.size === 0 && !dirtySettingsRef.current) {
+      if (uploadTimerRef.current !== null) {
+        window.clearTimeout(uploadTimerRef.current);
+        uploadTimerRef.current = null;
+      }
+      return;
+    }
+    if (uploadTimerRef.current !== null) {
+      window.clearTimeout(uploadTimerRef.current);
+    }
+    uploadTimerRef.current = window.setTimeout(() => {
+      void flushCloudUploads();
+    }, CLOUD_UPLOAD_DEBOUNCE_MS);
+  }, [flushCloudUploads]);
+
+  const markDayChangedForCloud = React.useCallback(
+    (nextState: DayState) => {
+      userEditedDatesRef.current.add(nextState.date);
+      const nextHash = computeDayFingerprint(nextState);
+      if (syncedDayHashesRef.current.get(nextState.date) === nextHash) {
+        dirtyDaysRef.current.delete(nextState.date);
+      } else {
+        dirtyDaysRef.current.set(nextState.date, nextState);
+      }
+      scheduleCloudUpload();
+    },
+    [scheduleCloudUpload]
+  );
+
+  const markSettingsChangedForCloud = React.useCallback(
+    (preparedBy: PreparedByInfo, savedCustomDisposals: string[]) => {
+      const candidate: CloudSettings = {
+        preparedBy,
+        savedCustomDisposals,
+        hiddenQuickEditDisposals: loadHiddenQuickEditDisposals(),
+      };
+      const nextHash = computeSettingsFingerprint(candidate);
+      if (syncedSettingsHashRef.current === nextHash) {
+        dirtySettingsRef.current = null;
+      } else {
+        dirtySettingsRef.current = candidate;
+      }
+      scheduleCloudUpload();
+    },
+    [scheduleCloudUpload]
+  );
+
   // Persist current date, tab, and sub-tab so user's view never resets
   useEffect(() => {
     saveUiPrefs({ dateIso, activeTab, unitSubTab });
   }, [dateIso, activeTab, unitSubTab]);
 
-  // Sync state on date change (carrying over previous day's disposals & roster for new dates)
+  // Persist initial/current day snapshot when first loaded
   useEffect(() => {
-    setDayState((prev) => {
-      if (prev.date === dateIso) return prev;
-      saveDayState(prev);
-      return loadDayState(dateIso, prev);
-    });
-  }, [dateIso]);
+    saveDayState(dayState);
+  }, [dayState.date]);
 
-  // Persist dayState when updated and sync unit rows into consolidated table
+  // Auth listener & initial Cloud download on entering the app
+  useEffect(() => {
+    void testFirestoreConnection();
+    void ensureAnonymousAuth();
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        if (dirtyDaysRef.current.size > 0 || dirtySettingsRef.current) {
+          void flushCloudUploads();
+        }
+      } else {
+        void ensureAnonymousAuth();
+      }
+    });
+
+    const handleVisibilityOrHide = () => {
+      if (document.visibilityState === 'hidden') {
+        if (dirtyDaysRef.current.size > 0 || dirtySettingsRef.current) {
+          void flushCloudUploads();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityOrHide);
+    window.addEventListener('pagehide', handleVisibilityOrHide);
+
+    // Download latest state from Cloud when entering the app
+    const bootDateIso = initialPrefs.dateIso;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await downloadFromCloudOnEnter(bootDateIso);
+        if (cancelled) return;
+
+        if (result.settings) {
+          savePreparedByStorage(result.settings.preparedBy);
+          saveCustomDisposalsList(result.settings.savedCustomDisposals);
+          saveHiddenQuickEditDisposals(result.settings.hiddenQuickEditDisposals);
+          syncedSettingsHashRef.current = computeSettingsFingerprint(result.settings);
+        }
+
+        fetchedCloudDatesRef.current.add(bootDateIso);
+
+        if (result.dayState) {
+          const normalizedCloud = normalizeDayState(result.dayState);
+          if (result.settings) {
+            normalizedCloud.preparedBy = result.settings.preparedBy;
+            normalizedCloud.savedCustomDisposals = result.settings.savedCustomDisposals;
+          }
+          saveDayState(normalizedCloud);
+          syncedDayHashesRef.current.set(
+            normalizedCloud.date,
+            computeDayFingerprint(normalizedCloud)
+          );
+          if (!userEditedDatesRef.current.has(normalizedCloud.date)) {
+            setDayState((curr) =>
+              curr.date === normalizedCloud.date ? normalizedCloud : curr
+            );
+          }
+        } else if (result.priorCloudDayState) {
+          const normalizedPrior = normalizeDayState(result.priorCloudDayState);
+          saveDayState(normalizedPrior);
+          syncedDayHashesRef.current.set(
+            normalizedPrior.date,
+            computeDayFingerprint(normalizedPrior)
+          );
+          if (!userEditedDatesRef.current.has(bootDateIso)) {
+            const inheritedFromCloud = loadDayState(bootDateIso, normalizedPrior);
+            if (result.settings) {
+              inheritedFromCloud.preparedBy = result.settings.preparedBy;
+              inheritedFromCloud.savedCustomDisposals = result.settings.savedCustomDisposals;
+            }
+            saveDayState(inheritedFromCloud);
+            syncedDayHashesRef.current.set(
+              bootDateIso,
+              computeDayFingerprint(inheritedFromCloud)
+            );
+            setDayState((curr) =>
+              curr.date === bootDateIso ? inheritedFromCloud : curr
+            );
+          }
+        }
+      } catch (err) {
+        console.error('Initial Cloud download failed:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribeAuth();
+      document.removeEventListener('visibilitychange', handleVisibilityOrHide);
+      window.removeEventListener('pagehide', handleVisibilityOrHide);
+      if (uploadTimerRef.current !== null) {
+        window.clearTimeout(uploadTimerRef.current);
+      }
+    };
+  }, [flushCloudUploads, initialPrefs.dateIso]);
+
+  const switchToDate = (nextDateIso: string) => {
+    if (!nextDateIso || nextDateIso === dateIso) return;
+    // Save current day's exact state before moving to another date
+    saveDayState(dayState);
+    const nextState = loadDayState(nextDateIso, dayState);
+    saveDayState(nextState);
+    if (!syncedDayHashesRef.current.has(nextDateIso) && !dirtyDaysRef.current.has(nextDateIso)) {
+      syncedDayHashesRef.current.set(nextDateIso, computeDayFingerprint(nextState));
+    }
+    setDateIso(nextDateIso);
+    setDayState(nextState);
+
+    // Fetch target date from Cloud if not yet downloaded in this session and not locally edited
+    if (!fetchedCloudDatesRef.current.has(nextDateIso) && !dirtyDaysRef.current.has(nextDateIso)) {
+      fetchedCloudDatesRef.current.add(nextDateIso);
+      void downloadDayFromCloud(nextDateIso)
+        .then((cloudDay) => {
+          if (!cloudDay || userEditedDatesRef.current.has(nextDateIso)) return;
+          const normalizedCloud = normalizeDayState(cloudDay);
+          saveDayState(normalizedCloud);
+          syncedDayHashesRef.current.set(
+            nextDateIso,
+            computeDayFingerprint(normalizedCloud)
+          );
+          setDayState((curr) => (curr.date === nextDateIso ? normalizedCloud : curr));
+        })
+        .catch((err) => {
+          console.error('Failed to download date from Cloud:', err);
+        });
+    }
+  };
+
+  // Persist dayState when updated, sync unit rows, and schedule 8s Cloud upload ONLY if data changed
   const updateAndSaveState = (updater: (prev: DayState) => DayState) => {
     setDayState((prev) => {
       const next = updater(prev);
       const syncedUnits = syncConsolidated155Row(next.consolidatedUnits, next);
       const fullySynced = { ...next, consolidatedUnits: syncedUnits };
       saveDayState(fullySynced);
+      markDayChangedForCloud(fullySynced);
       return fullySynced;
     });
   };
@@ -73,17 +328,15 @@ export default function App() {
   };
 
   const handlePrevDate = () => {
-    const prev = shiftDate(dateIso, -1);
-    setDateIso(prev);
+    switchToDate(shiftDate(dateIso, -1));
   };
 
   const handleNextDate = () => {
-    const next = shiftDate(dateIso, 1);
-    setDateIso(next);
+    switchToDate(shiftDate(dateIso, 1));
   };
 
   const handleDateChange = (newDateIso: string) => {
-    setDateIso(newDateIso);
+    switchToDate(newDateIso);
   };
 
   const activeUnitName = activeTab === 'Flying Wing' ? '155 UASU BAF' : activeTab;
@@ -150,6 +403,7 @@ export default function App() {
 
         if (nextSavedCustom !== prevSavedCustom) {
           saveCustomDisposalsList(nextSavedCustom);
+          markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
         }
 
         return setUnitAirmen(
@@ -176,6 +430,7 @@ export default function App() {
       }
       const nextSavedCustom = [...prevSavedCustom, trimmed];
       saveCustomDisposalsList(nextSavedCustom);
+      markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
       return {
         ...prev,
         savedCustomDisposals: nextSavedCustom,
@@ -190,6 +445,7 @@ export default function App() {
       const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
       const nextSavedCustom = prevSavedCustom.filter((c) => c.toLowerCase() !== targetLower);
       saveCustomDisposalsList(nextSavedCustom);
+      markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
 
       const affectedAirmanIds = new Set(
         prev.disposals
@@ -316,30 +572,68 @@ export default function App() {
     });
   };
 
-  // Add new airman to active unit roster
+  // Add new airman to active unit roster (maintaining Rank & BD seniority & cross-unit BD uniqueness)
   const handleAddAirmanToRoster = (newAirmanData: Omit<Airman, 'id'>) => {
     updateAndSaveState((prev) => {
       const targetUnit = newAirmanData.unit || activeUnitName;
+      if (newAirmanData.bdNo && findExistingBdConflict(prev, newAirmanData.bdNo)) {
+        return prev;
+      }
       const currentList = getUnitAirmen(prev, targetUnit);
-      const updatedList = [
+      const updatedList = sortAirmenBySeniority([
         ...currentList,
         {
           ...newAirmanData,
           unit: targetUnit,
           id: `airman-${Date.now()}`,
         },
-      ];
+      ]);
       return setUnitAirmen(prev, targetUnit, updatedList);
+    });
+  };
+
+  // Bulk add multiple airmen to active unit roster (maintaining Rank & BD seniority & cross-unit BD uniqueness)
+  const handleAddAirmenBulk = (newAirmenList: Omit<Airman, 'id'>[]) => {
+    if (newAirmenList.length === 0) return;
+    updateAndSaveState((prev) => {
+      const targetUnit = newAirmenList[0].unit || activeUnitName;
+      const currentList = getUnitAirmen(prev, targetUnit);
+      const existingGlobalBds = getAllExistingBdUnitMap(prev);
+      const seenBatch = new Set<string>();
+      const baseTime = Date.now();
+      const created: Airman[] = [];
+
+      newAirmenList.forEach((item, idx) => {
+        const cleanBd = (item.bdNo || '').trim();
+        if (!cleanBd || existingGlobalBds.has(cleanBd) || seenBatch.has(cleanBd)) {
+          return;
+        }
+        seenBatch.add(cleanBd);
+        created.push({
+          ...item,
+          bdNo: cleanBd,
+          unit: item.unit || targetUnit,
+          id: `airman-${baseTime}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        });
+      });
+
+      if (created.length === 0) return prev;
+      const mergedSorted = sortAirmenBySeniority([...currentList, ...created]);
+      return setUnitAirmen(prev, targetUnit, mergedSorted);
     });
   };
 
   // Update Prepared By
   const handleSavePreparedBy = (updated: PreparedByInfo) => {
     savePreparedByStorage(updated);
-    updateAndSaveState((prev) => ({
-      ...prev,
-      preparedBy: updated,
-    }));
+    updateAndSaveState((prev) => {
+      const customList = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
+      markSettingsChangedForCloud(updated, customList);
+      return {
+        ...prev,
+        preparedBy: updated,
+      };
+    });
   };
 
   // Update unit remarks
@@ -363,8 +657,16 @@ export default function App() {
   const handleUpdateAirmanFull = (updatedAirman: Airman, disposalVal: string) => {
     updateAndSaveState((prev) => {
       const targetUnit = updatedAirman.unit || activeUnitName;
-      const updatedAirmen = getUnitAirmen(prev, targetUnit).map((a) =>
-        a.id === updatedAirman.id ? { ...updatedAirman } : a
+      if (
+        updatedAirman.bdNo &&
+        findExistingBdConflict(prev, updatedAirman.bdNo, updatedAirman.id)
+      ) {
+        return prev;
+      }
+      const updatedAirmen = sortAirmenBySeniority(
+        getUnitAirmen(prev, targetUnit).map((a) =>
+          a.id === updatedAirman.id ? { ...updatedAirman } : a
+        )
       );
 
       let updatedDisposals = prev.disposals.filter((d) => d.airmanId !== updatedAirman.id);
@@ -460,6 +762,12 @@ export default function App() {
                 onSelectUnit={(unitName) => handleTabChange(unitName)}
                 onAddCustomDisposal={handleAddCustomDisposal}
                 onDeleteCustomDisposal={handleDeleteCustomDisposal}
+                onSettingsChanged={() =>
+                  markSettingsChangedForCloud(
+                    dayState.preparedBy,
+                    dayState.savedCustomDisposals ?? loadSavedCustomDisposals()
+                  )
+                }
               />
             </>
           ) : (
@@ -513,6 +821,7 @@ export default function App() {
                   onUpdateAirmanDisposal={handleUpdateAirmanDisposal}
                   onUpdateAirmanFull={handleUpdateAirmanFull}
                   onAddAirman={handleAddAirmanToRoster}
+                  onAddAirmenBulk={handleAddAirmenBulk}
                   onDeleteAirman={handleDeleteAirman}
                   onDeleteCustomDisposal={handleDeleteCustomDisposal}
                 />

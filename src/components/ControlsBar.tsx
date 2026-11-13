@@ -7,6 +7,7 @@ import {
   Printer,
 } from 'lucide-react';
 import { FLYING_WING_SQUADRONS } from '../data/initialData';
+import { getWeekdayName } from '../utils/storage';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface ControlsBarProps {
@@ -40,6 +41,7 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
   };
 
   const tabs = ['Flying Wing', ...FLYING_WING_SQUADRONS];
+  const weekdayName = getWeekdayName(dateIso);
 
   return (
     <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 pt-4 sm:pt-5 pb-3">
@@ -70,8 +72,13 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
           {/* Right Action Tools - Always side by side on Mobile & Desktop */}
           <div className="flex flex-nowrap items-center justify-between sm:justify-end gap-1.5 sm:gap-3 w-full md:w-auto">
             {/* Date Selector */}
-            <div className="flex items-center bg-[#070e1b] border border-slate-700/80 rounded-lg px-1.5 sm:px-2.5 py-1 sm:py-1.5 gap-0.5 sm:gap-1.5 text-[11px] sm:text-xs text-slate-300 shrink-0">
-              <span className="text-slate-400 font-medium text-[10px] sm:text-[11px]">Dt:</span>
+            <div className="flex items-center bg-[#070e1b] border border-slate-700/80 rounded-lg px-2 sm:px-2.5 py-1 sm:py-1.5 gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-slate-300 shrink-0">
+              {weekdayName && (
+                <span className="text-emerald-400 font-semibold text-[11px] sm:text-xs pr-1.5 border-r border-slate-700/80 whitespace-nowrap">
+                  {weekdayName}
+                </span>
+              )}
+              <span className="text-slate-400 font-medium text-[10px] sm:text-[11px]">Date:</span>
               <button
                 type="button"
                 onClick={onPrevDate}
@@ -108,7 +115,7 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
               </button>
             </div>
 
-            {/* Colored Official Export / Print Button beside Dt */}
+            {/* Colored Official Export / Print Button beside Date */}
             <button
               type="button"
               onClick={onOpenPrint}

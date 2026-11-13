@@ -14,6 +14,8 @@
 html,
 body {
   font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
+  background-color: #070d18;
+  color: #f1f5f9;
   margin: 0;
   padding: 0;
   overscroll-behavior-y: contain;

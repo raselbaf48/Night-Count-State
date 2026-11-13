@@ -1,0 +1,249 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'rasel399485@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDateId(id) {
+      return id is string && id.size() == 10 && id.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function isValidPreparedBy(p) {
+      return p is map &&
+        p.keys().hasAll(['name', 'rank', 'trade', 'bdNo', 'appointment', 'signatureDate']) &&
+        p.keys().hasOnly(['name', 'rank', 'trade', 'bdNo', 'appointment', 'signatureDate']) &&
+        p.name is string && p.name.size() <= 100 &&
+        p.rank is string && p.rank.size() <= 40 &&
+        p.trade is string && p.trade.size() <= 80 &&
+        p.bdNo is string && p.bdNo.size() <= 20 &&
+        p.appointment is string && p.appointment.size() <= 100 &&
+        p.signatureDate is string && p.signatureDate.size() <= 40;
+    }
+
+    function isValidDayState(data, dateIso) {
+      return data.keys().hasAll([
+          'date',
+          'formattedDisplayDate',
+          'preparedBy',
+          'airmen155',
+          'disposals',
+          'consolidatedUnits',
+          'createdAt',
+          'createdBy',
+          'updatedAt',
+          'updatedBy'
+        ]) &&
+        data.keys().hasOnly([
+          'date',
+          'formattedDisplayDate',
+          'preparedBy',
+          'airmen155',
+          'unitAirmen',
+          'disposals',
+          'consolidatedUnits',
+          'customRemarks',
+          'unitRemarks',
+          'savedCustomDisposals',
+          'rosterVersion',
+          'createdAt',
+          'createdBy',
+          'updatedAt',
+          'updatedBy'
+        ]) &&
+        data.date is string &&
+        data.date.size() == 10 &&
+        data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.date == dateIso &&
+        data.formattedDisplayDate is string &&
+        data.formattedDisplayDate.size() <= 40 &&
+        isValidPreparedBy(data.preparedBy) &&
+        data.airmen155 is list &&
+        data.airmen155.size() <= 1000 &&
+        (data.airmen155.size() == 0 || data.airmen155[0] is map) &&
+        (!('unitAirmen' in data) || (data.unitAirmen is map && data.unitAirmen.size() <= 50)) &&
+        data.disposals is list &&
+        data.disposals.size() <= 1000 &&
+        (data.disposals.size() == 0 || data.disposals[0] is map) &&
+        data.consolidatedUnits is list &&
+        data.consolidatedUnits.size() <= 50 &&
+        (data.consolidatedUnits.size() == 0 || data.consolidatedUnits[0] is map) &&
+        (!('customRemarks' in data) || (data.customRemarks is string && data.customRemarks.size() <= 2000)) &&
+        (!('unitRemarks' in data) || (data.unitRemarks is map && data.unitRemarks.size() <= 50)) &&
+        (!('savedCustomDisposals' in data) || (
+          data.savedCustomDisposals is list &&
+          data.savedCustomDisposals.size() <= 200 &&
+          (data.savedCustomDisposals.size() == 0 || (data.savedCustomDisposals[0] is string && data.savedCustomDisposals[0].size() <= 100))
+        )) &&
+        (!('rosterVersion' in data) || (data.rosterVersion is int && data.rosterVersion >= 1 && data.rosterVersion <= 100)) &&
+        data.createdBy is string &&
+        data.createdBy.size() >= 1 &&
+        data.createdBy.size() <= 128 &&
+        data.updatedBy is string &&
+        data.updatedBy == request.auth.uid &&
+        data.updatedAt == request.time;
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll([
+          'preparedBy',
+          'savedCustomDisposals',
+          'hiddenQuickEditDisposals',
+          'createdAt',
+          'createdBy',
+          'updatedAt',
+          'updatedBy'
+        ]) &&
+        data.keys().hasOnly([
+          'preparedBy',
+          'savedCustomDisposals',
+          'hiddenQuickEditDisposals',
+          'createdAt',
+          'createdBy',
+          'updatedAt',
+          'updatedBy'
+        ]) &&
+        isValidPreparedBy(data.preparedBy) &&
+        data.savedCustomDisposals is list &&
+        data.savedCustomDisposals.size() <= 200 &&
+        (data.savedCustomDisposals.size() == 0 || (data.savedCustomDisposals[0] is string && data.savedCustomDisposals[0].size() <= 100)) &&
+        data.hiddenQuickEditDisposals is list &&
+        data.hiddenQuickEditDisposals.size() <= 200 &&
+        (data.hiddenQuickEditDisposals.size() == 0 || (data.hiddenQuickEditDisposals[0] is string && data.hiddenQuickEditDisposals[0].size() <= 100)) &&
+        data.createdBy is string &&
+        data.createdBy.size() >= 1 &&
+        data.createdBy.size() <= 128 &&
+        data.updatedBy is string &&
+        data.updatedBy == request.auth.uid &&
+        data.updatedAt == request.time;
+    }
+
+    function isValidDateIndex(data) {
+      return data.keys().hasAll(['dates', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy']) &&
+        data.keys().hasOnly(['dates', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy']) &&
+        data.dates is list &&
+        data.dates.size() <= 500 &&
+        (data.dates.size() == 0 || (data.dates[0] is string && data.dates[0].size() == 10)) &&
+        data.createdBy is string &&
+        data.createdBy.size() >= 1 &&
+        data.createdBy.size() <= 128 &&
+        data.updatedBy is string &&
+        data.updatedBy == request.auth.uid &&
+        data.updatedAt == request.time;
+    }
+
+    // Boot connection check
+    match /night_count_meta/connection_test {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    // Daily Night Count State documents (targeted get by YYYY-MM-DD, authenticated writes)
+    match /night_count_days/{dateIso} {
+      allow get: if isValidDateId(dateIso);
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        isValidDateId(dateIso) &&
+        isValidDayState(incoming(), dateIso) &&
+        incoming().createdAt == request.time &&
+        incoming().createdBy == request.auth.uid;
+      allow update: if isSignedIn() &&
+        isValidDateId(dateIso) &&
+        isValidDayState(incoming(), dateIso) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'formattedDisplayDate',
+          'preparedBy',
+          'airmen155',
+          'unitAirmen',
+          'disposals',
+          'consolidatedUnits',
+          'customRemarks',
+          'unitRemarks',
+          'savedCustomDisposals',
+          'rosterVersion',
+          'updatedAt',
+          'updatedBy'
+        ]);
+      allow delete: if isAdmin() && isValidDateId(dateIso);
+    }
+
+    // Shared global settings
+    match /night_count_meta/settings {
+      allow get: if true;
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        isValidSettings(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().createdBy == request.auth.uid;
+      allow update: if isSignedIn() &&
+        isValidSettings(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'preparedBy',
+          'savedCustomDisposals',
+          'hiddenQuickEditDisposals',
+          'updatedAt',
+          'updatedBy'
+        ]);
+      allow delete: if isAdmin();
+    }
+
+    // Index of available dates in Firestore
+    match /night_count_meta/index {
+      allow get: if true;
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        isValidDateIndex(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().createdBy == request.auth.uid;
+      allow update: if isSignedIn() &&
+        isValidDateIndex(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'dates',
+          'updatedAt',
+          'updatedBy'
+        ]);
+      allow delete: if isAdmin();
+    }
+
+    // Admin registry (server/console managed only)
+    match /admins/{adminId} {
+      allow get: if isVerifiedUser() && isValidId(adminId) && request.auth.uid == adminId;
+      allow list, write: if false;
+    }
+  }
+}

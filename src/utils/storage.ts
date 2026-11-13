@@ -9,24 +9,110 @@ import {
   createBlankUnitRow,
 } from '../data/initialData';
 
+const RANK_SENIORITY: Record<string, number> = {
+  MWO: 0,
+  WO: 1,
+  'Flt Sgt': 2,
+  Sgt: 3,
+  Cpl: 4,
+  LAC: 5,
+  'AC-1': 6,
+  'AC-2': 7,
+  AC: 8,
+};
+
+export function sortAirmenBySeniority(airmen: Airman[]): Airman[] {
+  return [...airmen].sort((a, b) => {
+    const rankA = RANK_SENIORITY[a.rank] ?? 99;
+    const rankB = RANK_SENIORITY[b.rank] ?? 99;
+    if (rankA !== rankB) return rankA - rankB;
+
+    const bdNumA = parseInt((a.bdNo || '').replace(/\D/g, ''), 10);
+    const bdNumB = parseInt((b.bdNo || '').replace(/\D/g, ''), 10);
+    const hasBdA = !Number.isNaN(bdNumA);
+    const hasBdB = !Number.isNaN(bdNumB);
+
+    if (hasBdA && hasBdB && bdNumA !== bdNumB) {
+      return bdNumA - bdNumB;
+    }
+    if (hasBdA !== hasBdB) return hasBdA ? -1 : 1;
+
+    return (a.name || '').localeCompare(b.name || '');
+  });
+}
+
 export function getUnitAirmen(dayState: DayState, unitName: string): Airman[] {
   if (unitName === '155 UASU BAF') {
-    return dayState.airmen155;
+    return Array.isArray(dayState?.airmen155) ? dayState.airmen155 : [];
   }
-  return dayState.unitAirmen?.[unitName] || [];
+  const list = dayState?.unitAirmen?.[unitName];
+  return Array.isArray(list) ? list : [];
 }
 
 export function setUnitAirmen(dayState: DayState, unitName: string, airmen: Airman[]): DayState {
+  const sorted = sortAirmenBySeniority(airmen);
   if (unitName === '155 UASU BAF') {
-    return { ...dayState, airmen155: airmen };
+    return { ...dayState, airmen155: sorted };
   }
   return {
     ...dayState,
     unitAirmen: {
       ...(dayState.unitAirmen || {}),
-      [unitName]: airmen,
+      [unitName]: sorted,
     },
   };
+}
+
+export function getAllExistingBdUnitMap(dayState: DayState, excludeAirmanId?: string): Map<string, string> {
+  const bdMap = new Map<string, string>();
+  const addFromList = (list: Airman[] | undefined, unitName: string) => {
+    if (!Array.isArray(list)) return;
+    for (const a of list) {
+      if (!a || (excludeAirmanId && a.id === excludeAirmanId)) continue;
+      const bd = (a.bdNo || '').trim();
+      if (bd && !bdMap.has(bd)) {
+        bdMap.set(bd, unitName);
+      }
+    }
+  };
+
+  addFromList(dayState.airmen155, '155 UASU BAF');
+  if (dayState.unitAirmen && typeof dayState.unitAirmen === 'object') {
+    for (const [unitName, list] of Object.entries(dayState.unitAirmen)) {
+      if (unitName === '155 UASU BAF') continue;
+      addFromList(list, unitName);
+    }
+  }
+  return bdMap;
+}
+
+export function findExistingBdConflict(
+  dayState: DayState,
+  bdNo: string,
+  excludeAirmanId?: string
+): { unit: string; airman: Airman } | null {
+  const cleanBd = bdNo.trim();
+  if (!cleanBd) return null;
+
+  const checkList = (list: Airman[] | undefined, unitName: string) => {
+    if (!Array.isArray(list)) return null;
+    const found = list.find(
+      (a) => a && (!excludeAirmanId || a.id !== excludeAirmanId) && (a.bdNo || '').trim() === cleanBd
+    );
+    return found ? { unit: unitName, airman: found } : null;
+  };
+
+  const mainConflict = checkList(dayState.airmen155, '155 UASU BAF');
+  if (mainConflict) return mainConflict;
+
+  if (dayState.unitAirmen && typeof dayState.unitAirmen === 'object') {
+    for (const [unitName, list] of Object.entries(dayState.unitAirmen)) {
+      if (unitName === '155 UASU BAF') continue;
+      const conflict = checkList(list, unitName);
+      if (conflict) return conflict;
+    }
+  }
+  return null;
 }
 
 export function getUnitRemarks(dayState: DayState, unitName: string): string {
@@ -167,6 +253,18 @@ export function parseMilitaryDate(militaryStr: string): string {
   return '2026-11-11';
 }
 
+export function getWeekdayName(dateIso: string): string {
+  try {
+    if (!dateIso || !/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) return '';
+    const [y, m, d] = dateIso.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    if (Number.isNaN(dt.getTime())) return '';
+    return dt.toLocaleDateString('en-US', { weekday: 'long' });
+  } catch {
+    return '';
+  }
+}
+
 export function shiftDate(dateIso: string, offsetDays: number): string {
   try {
     const d = new Date(dateIso + 'T00:00:00');
@@ -180,7 +278,31 @@ export function shiftDate(dateIso: string, offsetDays: number): string {
   }
 }
 
+function deepCloneDayState(state: DayState): DayState {
+  try {
+    return JSON.parse(JSON.stringify(state)) as DayState;
+  } catch {
+    return {
+      ...state,
+      airmen155: [...(state.airmen155 || [])],
+      unitAirmen: { ...(state.unitAirmen || {}) },
+      unitRemarks: { ...(state.unitRemarks || {}) },
+      disposals: [...(state.disposals || [])],
+      consolidatedUnits: [...(state.consolidatedUnits || [])],
+      preparedBy: { ...(state.preparedBy || INITIAL_PREPARED_BY) },
+    };
+  }
+}
+
+export function normalizeDayState(parsed: any): DayState {
+  return normalizeAndMigrateParsedState(parsed);
+}
+
 function normalizeAndMigrateParsedState(parsed: any): DayState {
+  if (!parsed || typeof parsed !== 'object') {
+    return { ...INITIAL_DAY_STATE };
+  }
+
   const hasFullNames =
     Array.isArray(parsed.airmen155) &&
     parsed.airmen155.some(
@@ -331,6 +453,59 @@ function normalizeAndMigrateParsedState(parsed: any): DayState {
     parsed.preparedBy = { ...INITIAL_PREPARED_BY };
   }
 
+  if (!parsed || typeof parsed !== 'object') {
+    return { ...INITIAL_DAY_STATE };
+  }
+
+  if (!Array.isArray(parsed.disposals)) {
+    parsed.disposals = [];
+  } else {
+    parsed.disposals = parsed.disposals.filter((d: any) => d && typeof d === 'object');
+  }
+
+  if (!Array.isArray(parsed.consolidatedUnits) || parsed.consolidatedUnits.length === 0) {
+    parsed.consolidatedUnits = INITIAL_DAY_STATE.consolidatedUnits;
+  }
+
+  if (typeof parsed.date !== 'string' || !parsed.date) {
+    parsed.date = INITIAL_DAY_STATE.date;
+  }
+  if (typeof parsed.formattedDisplayDate !== 'string' || !parsed.formattedDisplayDate) {
+    parsed.formattedDisplayDate = formatDateToMilitary(parsed.date);
+  }
+
+  const seenGlobalBds = new Set<string>();
+  const dedupeByBd = (list: any[]) =>
+    list.filter((a: any) => {
+      if (!a || typeof a !== 'object') return false;
+      const bd = typeof a.bdNo === 'string' ? a.bdNo.trim() : '';
+      if (!bd) return true;
+      if (seenGlobalBds.has(bd)) return false;
+      seenGlobalBds.add(bd);
+      return true;
+    });
+
+  if (Array.isArray(parsed.airmen155)) {
+    parsed.airmen155 = sortAirmenBySeniority(dedupeByBd(parsed.airmen155));
+  } else {
+    parsed.airmen155 = sortAirmenBySeniority(dedupeByBd(INITIAL_AIRMEN_155));
+  }
+  if (parsed.unitAirmen && typeof parsed.unitAirmen === 'object') {
+    Object.keys(parsed.unitAirmen).forEach((u) => {
+      if (u === '155 UASU BAF') {
+        delete parsed.unitAirmen[u];
+        return;
+      }
+      if (Array.isArray(parsed.unitAirmen[u])) {
+        parsed.unitAirmen[u] = sortAirmenBySeniority(dedupeByBd(parsed.unitAirmen[u]));
+      } else {
+        parsed.unitAirmen[u] = [];
+      }
+    });
+  } else {
+    parsed.unitAirmen = {};
+  }
+
   parsed.savedCustomDisposals = mergedCustom;
   parsed.rosterVersion = 7;
   return parsed;
@@ -364,29 +539,28 @@ export function loadDayState(dateIso: string, fallbackSource?: DayState): DaySta
       return savedPreparedBy ? { ...normalized, preparedBy: savedPreparedBy } : normalized;
     }
 
-    // Inherit previous day's roster & disposals when opening a new date
+    // Inherit ONLY from the closest prior saved day (< dateIso), never from a future day
     const savedDates = getAllSavedDatesFromStorage();
     const priorDates = savedDates.filter((d) => d < dateIso);
-    const sourceDate =
-      priorDates.length > 0
-        ? priorDates[priorDates.length - 1]
-        : savedDates.length > 0
-        ? savedDates[savedDates.length - 1]
-        : null;
+    const sourceDate = priorDates.length > 0 ? priorDates[priorDates.length - 1] : null;
 
     if (sourceDate) {
       const sourceRaw = localStorage.getItem(`${STORAGE_PREFIX}${sourceDate}`);
       if (sourceRaw) {
-        const migratedSource = normalizeAndMigrateParsedState(JSON.parse(sourceRaw));
+        const migratedSource = deepCloneDayState(
+          normalizeAndMigrateParsedState(JSON.parse(sourceRaw))
+        );
         const inherited: DayState = {
           ...migratedSource,
           date: dateIso,
           formattedDisplayDate: formatDateToMilitary(dateIso),
-          preparedBy: savedPreparedBy || migratedSource.preparedBy || { ...INITIAL_PREPARED_BY },
+          preparedBy: savedPreparedBy
+            ? { ...savedPreparedBy }
+            : { ...(migratedSource.preparedBy || INITIAL_PREPARED_BY) },
           disposals: migratedSource.disposals.map((d) => ({ ...d, date: dateIso })),
           savedCustomDisposals: loadSavedCustomDisposals().length
             ? loadSavedCustomDisposals()
-            : migratedSource.savedCustomDisposals || [],
+            : [...(migratedSource.savedCustomDisposals || [])],
           rosterVersion: 7,
         };
         inherited.consolidatedUnits = syncConsolidated155Row(
@@ -397,16 +571,19 @@ export function loadDayState(dateIso: string, fallbackSource?: DayState): DaySta
       }
     }
 
-    if (fallbackSource) {
+    if (fallbackSource && fallbackSource.date < dateIso) {
+      const clonedFallback = deepCloneDayState(fallbackSource);
       const inherited: DayState = {
-        ...fallbackSource,
+        ...clonedFallback,
         date: dateIso,
         formattedDisplayDate: formatDateToMilitary(dateIso),
-        preparedBy: savedPreparedBy || fallbackSource.preparedBy || { ...INITIAL_PREPARED_BY },
-        disposals: fallbackSource.disposals.map((d) => ({ ...d, date: dateIso })),
+        preparedBy: savedPreparedBy
+          ? { ...savedPreparedBy }
+          : { ...(clonedFallback.preparedBy || INITIAL_PREPARED_BY) },
+        disposals: clonedFallback.disposals.map((d) => ({ ...d, date: dateIso })),
         savedCustomDisposals: loadSavedCustomDisposals().length
           ? loadSavedCustomDisposals()
-          : fallbackSource.savedCustomDisposals || [],
+          : [...(clonedFallback.savedCustomDisposals || [])],
         rosterVersion: 7,
       };
       inherited.consolidatedUnits = syncConsolidated155Row(
@@ -418,13 +595,14 @@ export function loadDayState(dateIso: string, fallbackSource?: DayState): DaySta
   } catch (err) {
     console.error('Failed to load day state from storage:', err);
   }
-  // Return default state with this date
+  // Return clean default state with this date
   const savedPreparedBy = loadSavedPreparedBy();
+  const baseClone = deepCloneDayState(INITIAL_DAY_STATE);
   return {
-    ...INITIAL_DAY_STATE,
+    ...baseClone,
     date: dateIso,
     formattedDisplayDate: formatDateToMilitary(dateIso),
-    preparedBy: savedPreparedBy || INITIAL_DAY_STATE.preparedBy,
+    preparedBy: savedPreparedBy ? { ...savedPreparedBy } : { ...baseClone.preparedBy },
     savedCustomDisposals: loadSavedCustomDisposals(),
     rosterVersion: 7,
   };
