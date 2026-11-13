@@ -174,7 +174,7 @@ export interface ExportDocxParams {
   tdyDisposals: DisposalRecord[];
   dutyDisposals: DisposalRecord[];
   officeDisposals: DisposalRecord[];
-  groupedCustomDisposals: { name: string; items: DisposalRecord[] }[];
+  separateGroups: { name: string; items: DisposalRecord[] }[];
   unitAirmen: Airman[];
   unitDisposalMap: Map<string, string>;
   formatTdyDetail: (detail: string) => string;
@@ -196,7 +196,7 @@ export async function exportReportToDocx(params: ExportDocxParams): Promise<void
     tdyDisposals,
     dutyDisposals,
     officeDisposals,
-    groupedCustomDisposals,
+    separateGroups,
     unitAirmen,
     unitDisposalMap,
     formatTdyDetail,
@@ -710,7 +710,7 @@ export async function exportReportToDocx(params: ExportDocxParams): Promise<void
         title: 'OFFICE',
         lines: officeDisposals.map((d) => `${d.rank} ${d.name}`),
       },
-      ...groupedCustomDisposals.map((g) => ({
+      ...separateGroups.map((g) => ({
         title: g.name.toUpperCase(),
         lines: g.items.map((d) => `${d.rank} ${d.name}`),
       })),

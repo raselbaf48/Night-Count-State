@@ -3,6 +3,7 @@ import { X, Printer, FileText } from 'lucide-react';
 import { DayState } from '../types/nightCount';
 import {
   calculateUnitSummarizedRow,
+  categorizeUnitDisposals,
   getFlyingWingSummary,
   getUnitAirmen,
   getUnitRemarks,
@@ -84,28 +85,8 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   const currentRemarks = !isFlyingWing ? getUnitRemarks(dayState, unitName) : '';
 
   const unitDisposals = !isFlyingWing ? dayState.disposals.filter((d) => d.unit === unitName) : [];
-  const isOfficeDisposal = (d: (typeof unitDisposals)[number]) =>
-    d.category === 'officeDuty' ||
-    d.category === 'canteen' ||
-    d.category === 'other' ||
-    (d.detail || d.displayCategory || '').trim().toLowerCase() === 'office duty';
-  const tdyDisposals = unitDisposals.filter((d) => d.category === 'detTdy');
-  const officeDisposals = unitDisposals.filter(isOfficeDisposal);
-  const dutyDisposals = unitDisposals.filter(
-    (d) => d.category !== 'detTdy' && d.category !== 'custom' && !isOfficeDisposal(d)
-  );
-  const customDisposalsList = unitDisposals.filter((d) => d.category === 'custom');
-
-  const groupedCustomDisposals = Object.keys(summarizedUnit.customDisposals || {})
-    .map((customName) => ({
-      name: customName,
-      items: customDisposalsList.filter(
-        (d) =>
-          (d.detail || d.displayCategory || '').trim().toLowerCase() ===
-          customName.trim().toLowerCase()
-      ),
-    }))
-    .filter((group) => group.items.length > 0);
+  const { tdyDisposals, dutyDisposals, officeDisposals, separateGroups } =
+    categorizeUnitDisposals(unitDisposals);
 
   const onParadeAirmen = !isFlyingWing
     ? getUnitAirmen(dayState, unitName).filter(
@@ -165,7 +146,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
       tdyDisposals,
       dutyDisposals,
       officeDisposals,
-      groupedCustomDisposals,
+      separateGroups,
       unitAirmen,
       unitDisposalMap,
       formatTdyDetail,
@@ -710,7 +691,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                     )}
                   </div>
 
-                  {groupedCustomDisposals.map((group) => (
+                  {separateGroups.map((group) => (
                     <div key={`print-section-${group.name}`}>
                       <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
                         {group.name}

@@ -5,6 +5,7 @@ import {
   INITIAL_DISPOSALS,
   INITIAL_PREPARED_BY,
   FLYING_WING_SQUADRONS,
+  DISPOSAL_OPTIONS,
   createBlankUnitRow,
 } from '../data/initialData';
 
@@ -863,4 +864,74 @@ export function getFlyingWingSummary(dayState: DayState) {
   );
 
   return { units, savedCustomNames, rowSummaries, totals };
+}
+
+const DUTY_ON_LABELS = new Set([
+  'gd',
+  'btf',
+  'ntf',
+  'airfield',
+  'airfield duty',
+  'escort',
+  'escort duty',
+]);
+const DUTY_ON_CATEGORIES = new Set(['baseSecurityGd', 'airfieldDuty', 'escort']);
+
+export interface SeparateDisposalGroup {
+  name: string;
+  items: DisposalRecord[];
+}
+
+export function categorizeUnitDisposals(unitDisposals: DisposalRecord[]) {
+  const isOfficeDisposal = (d: DisposalRecord) =>
+    d.category === 'officeDuty' ||
+    d.category === 'canteen' ||
+    d.category === 'other' ||
+    (d.detail || d.displayCategory || '').trim().toLowerCase() === 'office duty';
+
+  const isTdyDisposal = (d: DisposalRecord) => d.category === 'detTdy';
+
+  const isDutyOnDisposal = (d: DisposalRecord) => {
+    if (isTdyDisposal(d) || isOfficeDisposal(d) || d.category === 'custom') return false;
+    const label = (d.detail || d.displayCategory || '').trim().toLowerCase();
+    return DUTY_ON_CATEGORIES.has(d.category) || DUTY_ON_LABELS.has(label);
+  };
+
+  const tdyDisposals = unitDisposals.filter(isTdyDisposal);
+  const dutyDisposals = unitDisposals.filter(isDutyOnDisposal);
+  const officeDisposals = unitDisposals.filter(isOfficeDisposal);
+
+  const otherDisposals = unitDisposals.filter(
+    (d) => !isTdyDisposal(d) && !isDutyOnDisposal(d) && !isOfficeDisposal(d)
+  );
+
+  const groupMap = new Map<string, SeparateDisposalGroup>();
+  otherDisposals.forEach((d) => {
+    const rawName = (d.detail || d.displayCategory || 'Other').trim() || 'Other';
+    const key = rawName.toLowerCase();
+    const existing = groupMap.get(key);
+    if (existing) {
+      existing.items.push(d);
+    } else {
+      groupMap.set(key, { name: rawName, items: [d] });
+    }
+  });
+
+  const orderIndex = new Map<string, number>(
+    DISPOSAL_OPTIONS.map((opt, idx) => [opt.value.trim().toLowerCase(), idx])
+  );
+
+  const separateGroups = Array.from(groupMap.values()).sort((a, b) => {
+    const idxA = orderIndex.get(a.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+    const idxB = orderIndex.get(b.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+    if (idxA !== idxB) return idxA - idxB;
+    return 0;
+  });
+
+  return {
+    tdyDisposals,
+    dutyDisposals,
+    officeDisposals,
+    separateGroups,
+  };
 }

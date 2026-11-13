@@ -1,6 +1,11 @@
 import React from 'react';
 import { DayState, Airman } from '../types/nightCount';
-import { calculateUnitSummarizedRow, getUnitAirmen, getUnitRemarks } from '../utils/storage';
+import {
+  calculateUnitSummarizedRow,
+  categorizeUnitDisposals,
+  getUnitAirmen,
+  getUnitRemarks,
+} from '../utils/storage';
 
 interface UnitStateViewProps {
   unitName?: string;
@@ -19,29 +24,11 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
   const summarized = calculateUnitSummarizedRow(dayState, unitName);
   const currentRemarks = getUnitRemarks(dayState, unitName);
 
-  // Separate disposals into TDY (detTdy), Duty On (standard non-TDY/non-Office), Office, and Custom Disposals
+  // Separate disposals: TDY, Duty On (ONLY GD/BTF/NTF/Airfield/Escort), Office, and individual sections for all others
   const unitDisposals = dayState.disposals.filter((d) => d.unit === unitName);
-  const isOfficeDisposal = (d: (typeof unitDisposals)[number]) =>
-    d.category === 'officeDuty' ||
-    d.category === 'canteen' ||
-    d.category === 'other' ||
-    (d.detail || d.displayCategory || '').trim().toLowerCase() === 'office duty';
-  const tdyDisposals = unitDisposals.filter((d) => d.category === 'detTdy');
-  const officeDisposals = unitDisposals.filter(isOfficeDisposal);
-  const dutyDisposals = unitDisposals.filter(
-    (d) => d.category !== 'detTdy' && d.category !== 'custom' && !isOfficeDisposal(d)
-  );
-  const customDisposalsList = unitDisposals.filter((d) => d.category === 'custom');
+  const { tdyDisposals, dutyDisposals, officeDisposals, separateGroups } =
+    categorizeUnitDisposals(unitDisposals);
   const disposalAirmanIds = new Set(unitDisposals.map((d) => d.airmanId).filter(Boolean));
-
-  const groupedCustomDisposals = Object.keys(summarized.customDisposals || {})
-    .map((customName) => ({
-      name: customName,
-      items: customDisposalsList.filter(
-        (d) => (d.detail || d.displayCategory || '').trim().toLowerCase() === customName.trim().toLowerCase()
-      ),
-    }))
-    .filter((group) => group.items.length > 0);
 
   // Airmen who are explicitly on parade for this unit
   const onParadeAirmen = getUnitAirmen(dayState, unitName).filter(
@@ -326,8 +313,8 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
             )}
           </div>
 
-          {/* Separate Custom Disposal Sections (e.g. Admin Order) */}
-          {groupedCustomDisposals.map((group) => (
+          {/* Separate Individual Disposal Sections (Leave, Course, AWOL, Sick Report, Driving, Custom, etc.) */}
+          {separateGroups.map((group) => (
             <div key={`section-${group.name}`}>
               <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
                 {group.name}

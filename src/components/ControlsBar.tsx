@@ -7,6 +7,7 @@ import {
   Printer,
 } from 'lucide-react';
 import { FLYING_WING_SQUADRONS } from '../data/initialData';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface ControlsBarProps {
   dateIso: string;
@@ -45,18 +46,25 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
       {/* Top Controls Box */}
       <div className="bg-[#0b1424] border border-[#1b2a44] rounded-xl p-3 sm:p-5 shadow-lg shadow-black/40">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
-          {/* Left Text */}
-          <div>
-            <div className="flex items-center gap-2 text-[11px] sm:text-xs font-semibold text-emerald-400 tracking-wide uppercase">
-              <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span>{activeTab} • DAILY NIGHT COUNT STATE</span>
+          {/* Left Logo & Text */}
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+            <img
+              src="/air-force-logo.png"
+              alt="Bangladesh Air Force Logo"
+              className="w-14 h-14 sm:w-16 sm:h-16 object-contain shrink-0 drop-shadow-[0_0_2px_rgba(255,255,255,0.4)]"
+            />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[11px] sm:text-xs font-semibold text-emerald-400 tracking-wide uppercase">
+                <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="truncate">{activeTab} • DAILY NIGHT COUNT STATE</span>
+              </div>
+              <h1 className="text-lg sm:text-2xl font-bold text-white tracking-tight mt-0.5 sm:mt-1 truncate">
+                Night Count State Controls
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+                Manage night count date, personnel state and display settings
+              </p>
             </div>
-            <h1 className="text-lg sm:text-2xl font-bold text-white tracking-tight mt-0.5 sm:mt-1">
-              Night Count State Controls
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-              Manage night count date, personnel state and display settings
-            </p>
           </div>
 
           {/* Right Action Tools - Always side by side on Mobile & Desktop */}
@@ -109,6 +117,8 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
               <Printer className="w-3.5 h-3.5 text-white shrink-0" />
               <span>Official Export/Print</span>
             </button>
+
+            <PWAInstallButton />
           </div>
         </div>
       </div>

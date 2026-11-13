@@ -27,6 +27,7 @@ import {
 } from './utils/storage';
 import { DISPOSAL_OPTIONS } from './data/initialData';
 import { FileSpreadsheet, Users, UserCheck } from 'lucide-react';
+import { OfflineIndicator } from './components/OfflineIndicator';
 
 export default function App() {
   const initialPrefs = React.useMemo(() => loadUiPrefs(), []);
@@ -537,6 +538,8 @@ export default function App() {
         activeTab={activeTab}
         unitSubTab={unitSubTab}
       />
+
+      <OfflineIndicator />
     </div>
   );
 }
