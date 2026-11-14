@@ -24,15 +24,33 @@ if (import.meta.env.DEV) {
   }
 } else if (import.meta.env.PROD) {
   window.addEventListener('load', () => {
+    const hadController = Boolean(navigator.serviceWorker?.controller);
+    let reloadedForNewSw = false;
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hadController && !reloadedForNewSw) {
+          reloadedForNewSw = true;
+          window.location.reload();
+        }
+      });
+    }
+
     import('virtual:pwa-register')
       .then(({ registerSW }) => {
-        registerSW({
-          immediate: false,
-          onNeedReload() {
-            // Never auto-reload the active page
-          },
+        const updateSW = registerSW({
+          immediate: true,
           onNeedRefresh() {
-            // Never auto-reload the active page
+            void updateSW(true);
+          },
+          onRegisteredSW(_swUrl, registration) {
+            if (!registration) return;
+            void registration.update().catch(() => {});
+            document.addEventListener('visibilitychange', () => {
+              if (document.visibilityState === 'visible') {
+                void registration.update().catch(() => {});
+              }
+            });
           },
           onRegisterError(err) {
             console.warn('Service worker registration skipped:', err);

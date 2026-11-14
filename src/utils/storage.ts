@@ -28,33 +28,48 @@ import {
 const RANK_SENIORITY: Record<string, number> = {
   MWO: 0,
   WO: 1,
-  'Flt Sgt': 2,
-  Sgt: 3,
-  Cpl: 4,
+  'FLT SGT': 2,
+  SGT: 3,
+  CPL: 4,
   LAC: 5,
   'AC-1': 6,
   'AC-2': 7,
   AC: 8,
 };
 
+function getRankSeniorityOrder(rank: string | undefined): number {
+  return RANK_SENIORITY[(rank || '').trim().toUpperCase()] ?? 99;
+}
+
+function compareBySeniority(
+  rankA: string | undefined,
+  bdA: string | undefined,
+  nameA: string | undefined,
+  rankB: string | undefined,
+  bdB: string | undefined,
+  nameB: string | undefined
+): number {
+  const orderA = getRankSeniorityOrder(rankA);
+  const orderB = getRankSeniorityOrder(rankB);
+  if (orderA !== orderB) return orderA - orderB;
+
+  const bdNumA = parseInt((bdA || '').replace(/\D/g, ''), 10);
+  const bdNumB = parseInt((bdB || '').replace(/\D/g, ''), 10);
+  const hasBdA = !Number.isNaN(bdNumA);
+  const hasBdB = !Number.isNaN(bdNumB);
+
+  if (hasBdA && hasBdB && bdNumA !== bdNumB) {
+    return bdNumA - bdNumB;
+  }
+  if (hasBdA !== hasBdB) return hasBdA ? -1 : 1;
+
+  return (nameA || '').localeCompare(nameB || '');
+}
+
 export function sortAirmenBySeniority(airmen: Airman[]): Airman[] {
-  return [...airmen].sort((a, b) => {
-    const rankA = RANK_SENIORITY[a.rank] ?? 99;
-    const rankB = RANK_SENIORITY[b.rank] ?? 99;
-    if (rankA !== rankB) return rankA - rankB;
-
-    const bdNumA = parseInt((a.bdNo || '').replace(/\D/g, ''), 10);
-    const bdNumB = parseInt((b.bdNo || '').replace(/\D/g, ''), 10);
-    const hasBdA = !Number.isNaN(bdNumA);
-    const hasBdB = !Number.isNaN(bdNumB);
-
-    if (hasBdA && hasBdB && bdNumA !== bdNumB) {
-      return bdNumA - bdNumB;
-    }
-    if (hasBdA !== hasBdB) return hasBdA ? -1 : 1;
-
-    return (a.name || '').localeCompare(b.name || '');
-  });
+  return [...airmen].sort((a, b) =>
+    compareBySeniority(a.rank, a.bdNo, a.name, b.rank, b.bdNo, b.name)
+  );
 }
 
 export function getUnitAirmen(dayState: DayState, unitName: string): Airman[] {
@@ -1951,7 +1966,43 @@ export interface SeparateDisposalGroup {
   items: DisposalRecord[];
 }
 
-export function categorizeUnitDisposals(unitDisposals: DisposalRecord[]) {
+export function sortDisposalsBySeniority(
+  disposals: DisposalRecord[],
+  unitAirmen: Airman[] = []
+): DisposalRecord[] {
+  const byId = new Map<string, Airman>();
+  const byRankName = new Map<string, Airman>();
+
+  unitAirmen.forEach((a) => {
+    if (a.id) byId.set(a.id, a);
+    const key = `${(a.rank || '').trim().toUpperCase()}|${(a.name || '').trim().toLowerCase()}`;
+    if (!byRankName.has(key)) byRankName.set(key, a);
+  });
+
+  const resolveAirman = (d: DisposalRecord): Airman | undefined => {
+    if (d.airmanId && byId.has(d.airmanId)) return byId.get(d.airmanId);
+    const key = `${(d.rank || '').trim().toUpperCase()}|${(d.name || '').trim().toLowerCase()}`;
+    return byRankName.get(key);
+  };
+
+  return [...disposals].sort((a, b) => {
+    const airmanA = resolveAirman(a);
+    const airmanB = resolveAirman(b);
+    return compareBySeniority(
+      airmanA?.rank || a.rank,
+      airmanA?.bdNo,
+      a.name,
+      airmanB?.rank || b.rank,
+      airmanB?.bdNo,
+      b.name
+    );
+  });
+}
+
+export function categorizeUnitDisposals(
+  unitDisposals: DisposalRecord[],
+  unitAirmen: Airman[] = []
+) {
   const isOfficeDisposal = (d: DisposalRecord) =>
     d.category === 'officeDuty' ||
     d.category === 'canteen' ||
@@ -1966,9 +2017,15 @@ export function categorizeUnitDisposals(unitDisposals: DisposalRecord[]) {
     return DUTY_ON_CATEGORIES.has(d.category) || DUTY_ON_LABELS.has(label);
   };
 
-  const tdyDisposals = unitDisposals.filter(isTdyDisposal);
-  const dutyDisposals = unitDisposals.filter(isDutyOnDisposal);
-  const officeDisposals = unitDisposals.filter(isOfficeDisposal);
+  const tdyDisposals = sortDisposalsBySeniority(unitDisposals.filter(isTdyDisposal), unitAirmen);
+  const dutyDisposals = sortDisposalsBySeniority(
+    unitDisposals.filter(isDutyOnDisposal),
+    unitAirmen
+  );
+  const officeDisposals = sortDisposalsBySeniority(
+    unitDisposals.filter(isOfficeDisposal),
+    unitAirmen
+  );
 
   const otherDisposals = unitDisposals.filter(
     (d) => !isTdyDisposal(d) && !isDutyOnDisposal(d) && !isOfficeDisposal(d)
@@ -1990,12 +2047,17 @@ export function categorizeUnitDisposals(unitDisposals: DisposalRecord[]) {
     DISPOSAL_OPTIONS.map((opt, idx) => [opt.value.trim().toLowerCase(), idx])
   );
 
-  const separateGroups = Array.from(groupMap.values()).sort((a, b) => {
-    const idxA = orderIndex.get(a.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
-    const idxB = orderIndex.get(b.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
-    if (idxA !== idxB) return idxA - idxB;
-    return 0;
-  });
+  const separateGroups = Array.from(groupMap.values())
+    .map((group) => ({
+      ...group,
+      items: sortDisposalsBySeniority(group.items, unitAirmen),
+    }))
+    .sort((a, b) => {
+      const idxA = orderIndex.get(a.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+      const idxB = orderIndex.get(b.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+      if (idxA !== idxB) return idxA - idxB;
+      return 0;
+    });
 
   return {
     tdyDisposals,

@@ -5,6 +5,7 @@ import {
   categorizeUnitDisposals,
   getUnitAirmen,
   getUnitRemarks,
+  sortAirmenBySeniority,
 } from '../utils/storage';
 
 interface UnitStateViewProps {
@@ -35,14 +36,15 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
   const currentRemarks = getUnitRemarks(dayState, unitName);
 
   // Separate disposals: TDY, Duty On (ONLY GD/BTF/NTF/Airfield/Escort), Office, and individual sections for all others
+  const unitAirmen = getUnitAirmen(dayState, unitName);
   const unitDisposals = dayState.disposals.filter((d) => d.unit === unitName);
   const { tdyDisposals, dutyDisposals, officeDisposals, separateGroups } =
-    categorizeUnitDisposals(unitDisposals);
+    categorizeUnitDisposals(unitDisposals, unitAirmen);
   const disposalAirmanIds = new Set(unitDisposals.map((d) => d.airmanId).filter(Boolean));
 
-  // Airmen who are explicitly on parade for this unit
-  const onParadeAirmen = getUnitAirmen(dayState, unitName).filter(
-    (a) => !disposalAirmanIds.has(a.id) && a.status === 'on_parade'
+  // Airmen who are explicitly on parade for this unit (sorted by seniority)
+  const onParadeAirmen = sortAirmenBySeniority(
+    unitAirmen.filter((a) => !disposalAirmanIds.has(a.id) && a.status === 'on_parade')
   );
 
   const displayVal = (val: number | string) => {

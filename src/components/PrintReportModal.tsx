@@ -8,6 +8,7 @@ import {
   getUnitAirmen,
   getUnitRemarks,
   getWingPreparedBy,
+  sortAirmenBySeniority,
 } from '../utils/storage';
 import { exportReportToDocx } from '../utils/exportDocx';
 
@@ -72,7 +73,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   ];
 
   // --- Mode 2: Unit Nominal Roll Data ---
-  const unitAirmen = isNominalRoll ? getUnitAirmen(dayState, unitName) : [];
+  const unitAirmen = isNominalRoll ? sortAirmenBySeniority(getUnitAirmen(dayState, unitName)) : [];
   const unitDisposalMap = new Map<string, string>();
   if (isNominalRoll) {
     dayState.disposals
@@ -90,13 +91,16 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
     : calculateUnitSummarizedRow(dayState, '155 UASU BAF');
   const currentRemarks = !isFlyingWing ? getUnitRemarks(dayState, unitName) : '';
 
+  const unitStateAirmen = !isFlyingWing ? getUnitAirmen(dayState, unitName) : [];
   const unitDisposals = !isFlyingWing ? dayState.disposals.filter((d) => d.unit === unitName) : [];
   const { tdyDisposals, dutyDisposals, officeDisposals, separateGroups } =
-    categorizeUnitDisposals(unitDisposals);
+    categorizeUnitDisposals(unitDisposals, unitStateAirmen);
 
   const onParadeAirmen = !isFlyingWing
-    ? getUnitAirmen(dayState, unitName).filter(
-        (a) => a.status === 'on_parade' && !unitDisposals.some((d) => d.airmanId === a.id)
+    ? sortAirmenBySeniority(
+        unitStateAirmen.filter(
+          (a) => a.status === 'on_parade' && !unitDisposals.some((d) => d.airmanId === a.id)
+        )
       )
     : [];
 
