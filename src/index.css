@@ -27,6 +27,7 @@ body {
    Dark theme remains untouched; every surface, input, table, modal, badge,
    border, hover state, and scrollbar adapts cleanly under data-theme="light".
    ============================================================================ */
+@media screen {
 html[data-theme="light"] {
   color-scheme: light;
 }
@@ -559,6 +560,9 @@ html[data-theme="light"] .bg-\[\#be123c\],
 html[data-theme="light"] .bg-\[\#e11d48\],
 html[data-theme="light"] .bg-gradient-to-r.from-blue-600,
 html[data-theme="light"] .bg-gradient-to-r.from-blue-600 .text-white,
+html[data-theme="light"] .export-jpg-btn,
+html[data-theme="light"] .export-jpg-btn span,
+html[data-theme="light"] .export-jpg-btn svg,
 html[data-theme="light"] .calendar-accent-btn,
 html[data-theme="light"] .calendar-accent-btn span,
 html[data-theme="light"] .calendar-accent-btn svg,
@@ -599,6 +603,7 @@ html[data-theme="light"] .subtab-box-btn-active svg {
 html[data-theme="light"] .subtab-box-btn-active .subtab-count-pill {
   background-color: rgba(255, 255, 255, 0.24) !important;
   color: #ffffff !important;
+}
 }
 
 /* 3D Box Shape for Date Left/Right Arrow Buttons */
@@ -754,16 +759,42 @@ body,
   background: transparent !important;
 }
 
-/* Official Print Stylesheet for Military Muster Document */
+/* Official Print Stylesheet for Military Muster Document (Strict Black & White) */
 @media print {
-  @page {
-    size: A4 landscape;
-    margin: 8mm;
+  :root,
+  html,
+  html[data-theme="light"],
+  body,
+  #root {
+    color-scheme: light !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    background-image: none !important;
+    color: #000000 !important;
   }
 
-  body, * {
-    background-color: #ffffff !important;
+  body,
+  body *,
+  html[data-theme="light"] body *,
+  .print-card,
+  .print-card *,
+  html[data-theme="light"] .print-card,
+  html[data-theme="light"] .print-card * {
+    background-color: transparent !important;
+    background-image: none !important;
     color: #000000 !important;
+    border-color: #000000 !important;
+    text-decoration-color: #000000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
     font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
@@ -779,27 +810,53 @@ body,
 
   .print-card {
     background: #ffffff !important;
+    background-color: #ffffff !important;
     border: none !important;
     color: #000000 !important;
     box-shadow: none !important;
     padding: 0 !important;
     margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
   }
 
   .print-table {
     border: 1px solid #000000 !important;
     color: #000000 !important;
+    background-color: #ffffff !important;
     border-collapse: collapse !important;
     width: 100% !important;
+    table-layout: auto !important;
+  }
+
+  .print-table thead {
+    display: table-header-group !important;
+  }
+
+  .print-table tr {
+    background-color: #ffffff !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 
   .print-table th,
   .print-table td {
     border: 1px solid #000000 !important;
     color: #000000 !important;
-    background: transparent !important;
-    padding: 2px 3px !important;
-    font-size: 10px !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+  }
+
+  .print-state-table th,
+  .print-state-table td {
+    padding: 2px 2px !important;
+    font-size: 9.5px !important;
+  }
+
+  .print-nominal-table th,
+  .print-nominal-table td {
+    padding: 4px 6px !important;
+    font-size: 10.5px !important;
   }
 
   .print-table .writing-vertical {
@@ -807,10 +864,12 @@ body,
     transform: rotate(180deg) !important;
     text-orientation: mixed !important;
     white-space: nowrap !important;
+    color: #000000 !important;
   }
 
   .print-header {
     color: #000000 !important;
     text-decoration: underline !important;
+    text-decoration-color: #000000 !important;
   }
 }

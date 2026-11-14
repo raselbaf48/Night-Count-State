@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, Printer, FileText } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, Printer, FileText, Image as ImageIcon, Check } from 'lucide-react';
 import { DayState, WingConfig } from '../types/nightCount';
 import {
   calculateUnitSummarizedRow,
@@ -11,6 +11,7 @@ import {
   sortAirmenBySeniority,
 } from '../utils/storage';
 import { exportReportToDocx } from '../utils/exportDocx';
+import { exportReportToJpg } from '../utils/exportJpg';
 
 interface PrintReportModalProps {
   isOpen: boolean;
@@ -29,6 +30,15 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   activeWing,
   unitSubTab = 'state',
 }) => {
+  const [isExportingJpg, setIsExportingJpg] = useState(false);
+  const [jpgStatus, setJpgStatus] = useState<'idle' | 'copied' | 'saved'>('idle');
+
+  useEffect(() => {
+    if (jpgStatus === 'idle') return;
+    const timer = window.setTimeout(() => setJpgStatus('idle'), 2600);
+    return () => window.clearTimeout(timer);
+  }, [jpgStatus]);
+
   if (!isOpen) return null;
 
   const isFlyingWing = activeWing ? activeTab === activeWing.name : activeTab === 'Flying Wing';
@@ -140,28 +150,43 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
     window.print();
   };
 
+  const buildExportParams = () => ({
+    dayState,
+    isFlyingWing,
+    isNominalRoll,
+    unitName,
+    wingColumns,
+    wingSummary,
+    unitColumns,
+    summarizedUnit,
+    customEntries,
+    currentRemarks,
+    onParadeAirmen,
+    tdyDisposals,
+    dutyDisposals,
+    officeDisposals,
+    separateGroups,
+    unitAirmen,
+    unitDisposalMap,
+    formatTdyDetail,
+    preparedBy: effectivePreparedBy,
+  });
+
   const handleExportDoc = async () => {
-    await exportReportToDocx({
-      dayState,
-      isFlyingWing,
-      isNominalRoll,
-      unitName,
-      wingColumns,
-      wingSummary,
-      unitColumns,
-      summarizedUnit,
-      customEntries,
-      currentRemarks,
-      onParadeAirmen,
-      tdyDisposals,
-      dutyDisposals,
-      officeDisposals,
-      separateGroups,
-      unitAirmen,
-      unitDisposalMap,
-      formatTdyDetail,
-      preparedBy: effectivePreparedBy,
-    });
+    await exportReportToDocx(buildExportParams());
+  };
+
+  const handleExportJpg = async () => {
+    if (isExportingJpg) return;
+    setIsExportingJpg(true);
+    try {
+      const result = await exportReportToJpg(buildExportParams());
+      setJpgStatus(result.copied ? 'copied' : 'saved');
+    } catch (err) {
+      console.error('Failed to export JPG:', err);
+    } finally {
+      setIsExportingJpg(false);
+    }
   };
 
   const modalTitle = isFlyingWing
@@ -171,10 +196,11 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
     : `Print Preview: ${unitName}`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150 print:static print:inset-auto print:block print:p-0 print:bg-white">
-      <div className="bg-[#0b1424] border border-slate-700/80 w-full max-w-6xl max-h-[95vh] flex flex-col rounded-xl shadow-2xl overflow-hidden text-slate-200 print:max-h-none print:max-w-none print:w-full print:block print:border-0 print:rounded-none print:shadow-none print:overflow-visible print:bg-white print:text-black">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150 print:static print:inset-auto print:block print:w-full print:h-auto print:min-h-0 print:p-0 print:m-0 print:bg-white print:overflow-visible">
+      <style>{`@media print { @page { size: ${isNominalRoll ? 'A4 portrait' : 'A4 landscape'}; margin: ${isNominalRoll ? '10mm' : '8mm'}; } }`}</style>
+      <div className="bg-[#0b1424] border border-slate-700/80 w-full max-w-6xl max-h-[95vh] flex flex-col rounded-xl shadow-2xl overflow-hidden text-slate-200 print:max-h-none print:max-w-none print:w-full print:h-auto print:block print:border-0 print:rounded-none print:shadow-none print:overflow-visible print:bg-white print:text-black print:p-0 print:m-0">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 bg-[#0e1b30] border-b border-slate-700/80 no-print">
+        <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 px-4 sm:px-5 py-3.5 bg-[#0e1b30] border-b border-slate-700/80 no-print">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -192,32 +218,55 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={handleExportDoc}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2563eb] hover:bg-blue-500 text-white font-semibold text-xs rounded-lg transition-colors cursor-pointer shadow-sm"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#2563eb] hover:bg-blue-500 text-white font-semibold text-[11px] sm:text-xs rounded-lg transition-colors cursor-pointer shadow-sm whitespace-nowrap"
               title="Download Microsoft Word document"
             >
-              <FileText className="w-3.5 h-3.5" />
+              <FileText className="w-3.5 h-3.5 shrink-0" />
               <span>Export Doc</span>
             </button>
 
             <button
               type="button"
+              onClick={handleExportJpg}
+              disabled={isExportingJpg}
+              className="export-jpg-btn flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-semibold text-[11px] sm:text-xs rounded-lg transition-colors cursor-pointer shadow-sm whitespace-nowrap"
+              title="Download JPG image and copy to clipboard"
+            >
+              {jpgStatus !== 'idle' ? (
+                <Check className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+              )}
+              <span>
+                {isExportingJpg
+                  ? 'Exporting...'
+                  : jpgStatus === 'copied'
+                    ? 'JPG Copied!'
+                    : jpgStatus === 'saved'
+                      ? 'JPG Saved!'
+                      : 'Export JPG'}
+              </span>
+            </button>
+
+            <button
+              type="button"
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg transition-colors cursor-pointer shadow-sm"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-[11px] sm:text-xs rounded-lg transition-colors cursor-pointer shadow-sm whitespace-nowrap"
               title="Print document to printer or PDF"
             >
-              <Printer className="w-3.5 h-3.5" />
+              <Printer className="w-3.5 h-3.5 shrink-0" />
               <span>Print</span>
             </button>
           </div>
         </div>
 
         {/* Printable Document Preview Area */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#070d18] print:overflow-visible print:p-0 print:bg-white">
-          <div className="bg-[#0b1424] border border-slate-700/80 rounded-xl p-5 sm:p-7 shadow-2xl max-w-6xl mx-auto print-card text-[12px] print:max-w-none">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#070d18] print:overflow-visible print:p-0 print:m-0 print:w-full print:block print:bg-white">
+          <div className="bg-[#0b1424] border border-slate-700/80 rounded-xl p-5 sm:p-7 shadow-2xl max-w-6xl mx-auto print-card text-[12px] print:w-full print:max-w-none print:p-0 print:m-0 print:border-0 print:rounded-none print:shadow-none">
             {isFlyingWing ? (
               <>
                 <div className="flex flex-col items-center justify-center text-center mb-2">
@@ -235,8 +284,8 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                   </span>
                 </div>
 
-                <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] print:overflow-visible print:border-0 print:rounded-none print:bg-white">
-                  <table className="w-full table-auto text-[12px] text-center border-collapse print-table">
+                <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] print:overflow-visible print:w-full print:border-0 print:rounded-none print:bg-white">
+                  <table className="w-full table-auto text-[12px] text-center border-collapse print-table print-state-table">
                     <thead>
                       <tr className="bg-[#0f1b2f] border-b border-slate-700 text-slate-200">
                         {wingColumns.map((col, idx) => (
@@ -431,8 +480,8 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                   <span>Date: {dayState.formattedDisplayDate}</span>
                 </div>
 
-                <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] print:overflow-visible print:border-0 print:rounded-none print:bg-white">
-                  <table className="w-full text-[12px] text-left border-collapse print-table">
+                <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] print:overflow-visible print:w-full print:border-0 print:rounded-none print:bg-white">
+                  <table className="w-full text-[12px] text-left border-collapse print-table print-nominal-table">
                     <thead>
                       <tr className="bg-[#0f1b2f] border-b border-slate-700 text-slate-200">
                         <th className="py-2 px-3 border-r border-slate-700/80 text-center w-12">Ser</th>
@@ -506,8 +555,8 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                   </span>
                 </div>
 
-                <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] mb-6 print:overflow-visible print:border-0 print:rounded-none print:bg-white">
-                  <table className="w-full table-auto text-[12px] text-center border-collapse print-table">
+                <div className="overflow-x-auto border border-slate-700/80 rounded bg-[#070e1b] mb-6 print:overflow-visible print:w-full print:border-0 print:rounded-none print:bg-white">
+                  <table className="w-full table-auto text-[12px] text-center border-collapse print-table print-state-table">
                     <thead>
                       <tr className="bg-[#0f1b2f] border-b border-slate-700 text-slate-200">
                         {unitColumns.map((col, idx) => (
