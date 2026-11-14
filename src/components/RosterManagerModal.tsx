@@ -97,14 +97,10 @@ export const RosterManagerModal: React.FC<RosterManagerModalProps> = ({
                     onChange={(e) => setRank(e.target.value as Rank)}
                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100"
                   >
+                    <option value="Cpl">Cpl</option>
+                    <option value="LAC">LAC</option>
                     <option value="AC-1">AC-1</option>
                     <option value="AC-2">AC-2</option>
-                    <option value="LAC">LAC</option>
-                    <option value="Cpl">Cpl</option>
-                    <option value="Sgt">Sgt</option>
-                    <option value="Flt Sgt">Flt Sgt</option>
-                    <option value="WO">WO</option>
-                    <option value="MWO">MWO</option>
                   </select>
                 </div>
 

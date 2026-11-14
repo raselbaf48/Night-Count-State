@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import {
   Shield,
-  UserCheck,
-  History,
   Building2,
   Settings,
   LogOut,
@@ -20,22 +18,17 @@ interface SidebarProps {
   wings: WingConfig[];
   activeWingId: string;
   activeTab: string;
-  wingSubTab: 'consolidated' | 'log';
   dayState: DayState;
   operator: OperatorProfile | null;
   operatorRole?: UserRole | 'GUEST';
-  canEditPreparedBy?: boolean;
-  canViewUpdateLog?: boolean;
+  brandTitle?: string;
   canAccessSettings?: boolean;
-  totalDayLogsCount: number;
   isCollapsed: boolean;
   isMobileOpen: boolean;
   isSettingsOpen: boolean;
   onToggleCollapse: () => void;
   onCloseMobile: () => void;
   onSelectWing: (wing: WingConfig) => void;
-  onSelectPreparedBy: () => void;
-  onSelectWingLog: () => void;
   onSelectUnit: (unitName: string, wingId?: string) => void;
   onOpenSettings: () => void;
   onLogout: () => void;
@@ -45,22 +38,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   wings,
   activeWingId,
   activeTab,
-  wingSubTab,
   dayState,
   operator,
   operatorRole = 'USER',
-  canEditPreparedBy = true,
-  canViewUpdateLog = true,
+  brandTitle = '155 UASU BAF',
   canAccessSettings = true,
-  totalDayLogsCount,
   isCollapsed,
   isMobileOpen,
   isSettingsOpen,
   onToggleCollapse,
   onCloseMobile,
   onSelectWing,
-  onSelectPreparedBy,
-  onSelectWingLog,
   onSelectUnit,
   onOpenSettings,
   onLogout,
@@ -69,8 +57,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [squadronsOpen, setSquadronsOpen] = useState(true);
 
   const activeWing = wings.find((w) => w.id === activeWingId) || wings[0];
-  const isAnyWingTab = wings.some((w) => w.name === activeTab);
-  const isWingLog = isAnyWingTab && wingSubTab === 'log';
 
   const handleNavClick = (fn: () => void) => {
     fn();
@@ -96,7 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {!compact && (
             <div className="min-w-0">
               <div className="text-xs font-extrabold tracking-wide text-white truncate">
-                155 UASU BAF
+                {brandTitle}
               </div>
               <div className="text-[10px] font-semibold tracking-wider text-amber-400/90 uppercase truncate">
                 {activeWing?.shortName || 'FLG WG'} • NIGHT COUNT
@@ -166,8 +152,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {(overviewOpen || compact) && (
             <div className="mt-1 space-y-1">
               {wings.map((wing) => {
-                const isWingSelected =
-                  activeTab === wing.name && wingSubTab === 'consolidated';
+                const isWingSelected = activeTab === wing.name;
                 return (
                   <button
                     key={wing.id}
@@ -200,51 +185,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </button>
                 );
               })}
-
-              {canEditPreparedBy && (
-                <button
-                  type="button"
-                  onClick={() => handleNavClick(onSelectPreparedBy)}
-                  title="Prepared By Signature"
-                  className={`w-full flex items-center gap-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5'
-                  } text-emerald-100/85 hover:text-white hover:bg-[#0a3c2a] border border-transparent hover:border-[#14553e]/60`}
-                >
-                  <UserCheck className="w-4 h-4 shrink-0" />
-                  {!compact && <span className="truncate">Prepared By</span>}
-                </button>
-              )}
-
-              {canViewUpdateLog && (
-                <button
-                  type="button"
-                  onClick={() => handleNavClick(onSelectWingLog)}
-                  title="State Update Log"
-                  className={`w-full flex items-center justify-between gap-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5'
-                  } ${
-                    isWingLog
-                      ? 'bg-[#00b853] text-slate-950 font-bold shadow-md shadow-emerald-950/60'
-                      : 'text-emerald-100/85 hover:text-white hover:bg-[#0a3c2a] border border-transparent hover:border-[#14553e]/60'
-                  }`}
-                >
-                  <span className="flex items-center gap-2.5 min-w-0">
-                    <History className="w-4 h-4 shrink-0" />
-                    {!compact && <span className="truncate">Update Log</span>}
-                  </span>
-                  {!compact && (
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0 ${
-                        isWingLog
-                          ? 'bg-slate-950/20 text-slate-950'
-                          : 'bg-[#093d2b] text-emerald-300 border border-[#14553e]'
-                      }`}
-                    >
-                      {totalDayLogsCount}
-                    </span>
-                  )}
-                </button>
-              )}
             </div>
           )}
         </div>

@@ -26,7 +26,22 @@ export const OperatorAuthModal: React.FC<OperatorAuthModalProps> = ({
   const [flight, setFlight] = useState('');
   const [isCustomTrade, setIsCustomTrade] = useState(false);
   const [isCustomFlight, setIsCustomFlight] = useState(false);
+  const [focusedField, setFocusedField] = useState<
+    'bdNo' | 'rank' | 'name' | 'trade' | 'flight' | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
+
+  const getModalFloatLabelClass = (field: 'bdNo' | 'rank' | 'name' | 'trade' | 'flight', value: string) => {
+    const isFieldFocused = focusedField === field;
+    const isFloating = isFieldFocused || value.length > 0;
+    return `absolute left-3.5 pointer-events-none transition-all duration-150 uppercase tracking-wider font-bold z-10 ${
+      isFloating
+        ? `top-1 -translate-y-1/2 px-1.5 bg-[#0b1424] text-[10px] ${
+            isFieldFocused ? 'text-emerald-400' : 'text-slate-400'
+          }`
+        : 'top-[calc(50%+2px)] -translate-y-1/2 text-xs text-slate-400'
+    }`;
+  };
 
   const availableTrades = useMemo(() => {
     const dynamic = new Set<string>(BAF_TRADES);
@@ -61,6 +76,7 @@ export const OperatorAuthModal: React.FC<OperatorAuthModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setError(null);
+    setFocusedField(null);
     if (initialOperator) {
       setBdNo(initialOperator.bdNo || '');
       setRank(initialOperator.rank || '');
@@ -176,45 +192,55 @@ export const OperatorAuthModal: React.FC<OperatorAuthModalProps> = ({
           )}
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-slate-300 font-semibold">
-                  BD <span className="text-rose-400">*</span>
-                </label>
-                <span className="text-[10px] text-slate-500 font-sans">{bdNo.length}/6</span>
-              </div>
+            <div className="relative pt-1">
+              <label
+                htmlFor="op-auth-bd"
+                className={getModalFloatLabelClass('bdNo', bdNo)}
+              >
+                BD *
+              </label>
               <input
+                id="op-auth-bd"
                 type="text"
                 inputMode="numeric"
                 maxLength={6}
                 required
                 autoFocus
-                placeholder="474455"
                 value={bdNo}
+                onFocus={() => setFocusedField('bdNo')}
+                onBlur={() => setFocusedField((prev) => (prev === 'bdNo' ? null : prev))}
                 onChange={(e) => handleBdChange(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-sans"
+                className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border tabular-nums ${
+                  focusedField === 'bdNo' ? 'border-emerald-500' : 'border-slate-700/80'
+                }`}
               />
-              <p className="text-[10px] text-slate-500 mt-0.5">Must be 6 digits</p>
+              <span className="absolute right-3 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] text-slate-400 tabular-nums pointer-events-none">
+                {bdNo.length}/6
+              </span>
             </div>
 
-            <div>
-              <label className="text-slate-300 block mb-1 font-semibold">
-                Rank <span className="text-rose-400">*</span>
+            <div className="relative pt-1">
+              <label
+                htmlFor="op-auth-rank"
+                className={getModalFloatLabelClass('rank', rank)}
+              >
+                Rank *
               </label>
               <select
+                id="op-auth-rank"
                 required
                 value={rank}
+                onFocus={() => setFocusedField('rank')}
+                onBlur={() => setFocusedField((prev) => (prev === 'rank' ? null : prev))}
                 onChange={(e) => {
                   setRank(e.target.value);
                   setError(null);
                 }}
-                className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                  !rank ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                  focusedField === 'rank' ? 'border-emerald-500' : 'border-slate-700/80'
                 }`}
               >
-                <option value="" disabled>
-                  Select Rank *
-                </option>
+                <option value="" disabled hidden></option>
                 {BAF_ALL_RANKS.map((r) => (
                   <option key={r} value={r} className="bg-[#0b1424] text-slate-200">
                     {r}
@@ -224,58 +250,74 @@ export const OperatorAuthModal: React.FC<OperatorAuthModalProps> = ({
             </div>
           </div>
 
-          <div>
-            <label className="text-slate-300 block mb-1 font-semibold">
-              Name <span className="text-rose-400">*</span>
+          <div className="relative pt-1">
+            <label
+              htmlFor="op-auth-name"
+              className={getModalFloatLabelClass('name', name)}
+            >
+              Name *
             </label>
             <input
+              id="op-auth-name"
               type="text"
               required
-              placeholder="Shakil"
               value={name}
+              onFocus={() => setFocusedField('name')}
+              onBlur={() => setFocusedField((prev) => (prev === 'name' ? null : prev))}
               onChange={(e) => {
                 setName(e.target.value);
                 setError(null);
               }}
-              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+              className={`w-full bg-[#08101e] rounded-xl px-3.5 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                focusedField === 'name' ? 'border-emerald-500' : 'border-slate-700/80'
+              }`}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-slate-300 font-semibold">
-                  Trade <span className="text-rose-400">*</span>
-                </label>
-                {isCustomTrade && (
+            <div className="relative pt-1">
+              <label
+                htmlFor="op-auth-trade"
+                className={getModalFloatLabelClass('trade', trade)}
+              >
+                Trade *
+              </label>
+              {isCustomTrade ? (
+                <>
+                  <input
+                    id="op-auth-trade"
+                    type="text"
+                    required
+                    value={trade}
+                    onFocus={() => setFocusedField('trade')}
+                    onBlur={() => setFocusedField((prev) => (prev === 'trade' ? null : prev))}
+                    onChange={(e) => {
+                      setTrade(e.target.value);
+                      setError(null);
+                    }}
+                    className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                      focusedField === 'trade' ? 'border-emerald-500' : 'border-slate-700/80'
+                    }`}
+                  />
                   <button
                     type="button"
                     onClick={() => {
                       setIsCustomTrade(false);
                       setTrade('');
+                      setFocusedField(null);
                     }}
-                    className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                    className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
                   >
-                    Select list
+                    List
                   </button>
-                )}
-              </div>
-              {isCustomTrade ? (
-                <input
-                  type="text"
-                  required
-                  placeholder="Enter Trade"
-                  value={trade}
-                  onChange={(e) => {
-                    setTrade(e.target.value);
-                    setError(null);
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                />
+                </>
               ) : (
                 <select
+                  id="op-auth-trade"
                   required
                   value={trade}
+                  onFocus={() => setFocusedField('trade')}
+                  onBlur={() => setFocusedField((prev) => (prev === 'trade' ? null : prev))}
                   onChange={(e) => {
                     if (e.target.value === '__CUSTOM__') {
                       setIsCustomTrade(true);
@@ -285,13 +327,11 @@ export const OperatorAuthModal: React.FC<OperatorAuthModalProps> = ({
                     }
                     setError(null);
                   }}
-                  className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                    !trade ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                  className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                    focusedField === 'trade' ? 'border-emerald-500' : 'border-slate-700/80'
                   }`}
                 >
-                  <option value="" disabled>
-                    Select Trade *
-                  </option>
+                  <option value="" disabled hidden></option>
                   {availableTrades.map((t) => (
                     <option key={t} value={t} className="bg-[#0b1424] text-slate-200">
                       {t}
@@ -307,40 +347,49 @@ export const OperatorAuthModal: React.FC<OperatorAuthModalProps> = ({
               )}
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-slate-300 font-semibold">
-                  Flight <span className="text-rose-400">*</span>
-                </label>
-                {isCustomFlight && (
+            <div className="relative pt-1">
+              <label
+                htmlFor="op-auth-flight"
+                className={getModalFloatLabelClass('flight', flight)}
+              >
+                Flight *
+              </label>
+              {isCustomFlight ? (
+                <>
+                  <input
+                    id="op-auth-flight"
+                    type="text"
+                    required
+                    value={flight}
+                    onFocus={() => setFocusedField('flight')}
+                    onBlur={() => setFocusedField((prev) => (prev === 'flight' ? null : prev))}
+                    onChange={(e) => {
+                      setFlight(e.target.value);
+                      setError(null);
+                    }}
+                    className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                      focusedField === 'flight' ? 'border-emerald-500' : 'border-slate-700/80'
+                    }`}
+                  />
                   <button
                     type="button"
                     onClick={() => {
                       setIsCustomFlight(false);
                       setFlight('');
+                      setFocusedField(null);
                     }}
-                    className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                    className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
                   >
-                    Select list
+                    List
                   </button>
-                )}
-              </div>
-              {isCustomFlight ? (
-                <input
-                  type="text"
-                  required
-                  placeholder="Enter Flight"
-                  value={flight}
-                  onChange={(e) => {
-                    setFlight(e.target.value);
-                    setError(null);
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                />
+                </>
               ) : (
                 <select
+                  id="op-auth-flight"
                   required
                   value={flight}
+                  onFocus={() => setFocusedField('flight')}
+                  onBlur={() => setFocusedField((prev) => (prev === 'flight' ? null : prev))}
                   onChange={(e) => {
                     if (e.target.value === '__CUSTOM__') {
                       setIsCustomFlight(true);
@@ -350,13 +399,11 @@ export const OperatorAuthModal: React.FC<OperatorAuthModalProps> = ({
                     }
                     setError(null);
                   }}
-                  className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                    !flight ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                  className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                    focusedField === 'flight' ? 'border-emerald-500' : 'border-slate-700/80'
                   }`}
                 >
-                  <option value="" disabled>
-                    Select Flight *
-                  </option>
+                  <option value="" disabled hidden></option>
                   {availableFlights.map((f) => (
                     <option key={f} value={f} className="bg-[#0b1424] text-slate-200">
                       {f}

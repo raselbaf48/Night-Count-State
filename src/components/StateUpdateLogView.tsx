@@ -5,6 +5,7 @@ import { DayState, OperatorProfile } from '../types/nightCount';
 interface StateUpdateLogViewProps {
   dayState: DayState;
   unitFilter?: string;
+  lockedUnit?: string;
   verifiedOperator: OperatorProfile | null;
   onRequestChangeOperator: () => void;
 }
@@ -12,19 +13,28 @@ interface StateUpdateLogViewProps {
 export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
   dayState,
   unitFilter,
+  lockedUnit,
   verifiedOperator,
   onRequestChangeOperator,
 }) => {
+  const effectiveUnitFilter = lockedUnit || unitFilter;
   const [searchQuery, setSearchQuery] = useState('');
-  const [scope, setScope] = useState<'all' | 'unit'>(unitFilter ? 'unit' : 'all');
+  const [scope, setScope] = useState<'all' | 'unit'>(effectiveUnitFilter ? 'unit' : 'all');
+
+  const baseLogs = useMemo(() => {
+    const raw = Array.isArray(dayState.updateLogs) ? [...dayState.updateLogs] : [];
+    return lockedUnit
+      ? raw.filter((entry) => entry.unitName.toLowerCase() === lockedUnit.toLowerCase())
+      : raw;
+  }, [dayState.updateLogs, lockedUnit]);
 
   const logs = useMemo(() => {
-    const raw = Array.isArray(dayState.updateLogs) ? [...dayState.updateLogs] : [];
+    const raw = [...baseLogs];
     // Newest updates first
     raw.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
 
     return raw.filter((entry) => {
-      if (scope === 'unit' && unitFilter && entry.unitName !== unitFilter) {
+      if ((lockedUnit || scope === 'unit') && effectiveUnitFilter && entry.unitName.toLowerCase() !== effectiveUnitFilter.toLowerCase()) {
         return false;
       }
       if (searchQuery.trim()) {
@@ -48,9 +58,9 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
       }
       return true;
     });
-  }, [dayState.updateLogs, scope, unitFilter, searchQuery]);
+  }, [baseLogs, scope, effectiveUnitFilter, lockedUnit, searchQuery]);
 
-  const totalDayLogs = dayState.updateLogs?.length || 0;
+  const totalDayLogs = baseLogs.length;
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 pb-12">
@@ -103,7 +113,11 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
 
         {/* Filter & Search Bar */}
         <div className="px-6 py-3 border-b border-slate-800/60 bg-[#08101e] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-          {unitFilter ? (
+          {lockedUnit ? (
+            <span className="text-xs text-slate-400 font-medium">
+              Showing updates for <span className="text-emerald-400 font-semibold">{lockedUnit}</span> ({dayState.formattedDisplayDate})
+            </span>
+          ) : unitFilter ? (
             <div className="inline-flex items-center gap-1 bg-[#0b1424] border border-slate-800 p-1 rounded-lg self-start">
               <button
                 type="button"

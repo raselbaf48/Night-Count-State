@@ -234,22 +234,12 @@ export const BAF_TRADES = [
   'IT Asst',
 ];
 
-// Ranks for Add Airmen (Cpl, LAC, AC)
-export const BAF_RANKS_SELECT: Rank[] = ['Cpl', 'LAC', 'AC', 'AC-1', 'AC-2'];
+// Ranks for Airmen (Cpl, LAC, AC-1, AC-2)
+export const BAF_RANKS_SELECT: Rank[] = ['Cpl', 'LAC', 'AC-1', 'AC-2'];
 
 // All BAF airmen ranks for Operator Login & Auth
-export const BAF_ALL_RANKS: Rank[] = [
-  'MWO',
-  'WO',
-  'Flt Sgt',
-  'Sgt',
-  'Cpl',
-  'LAC',
-  'AC-1',
-  'AC-2',
-  'AC',
-];
+export const BAF_ALL_RANKS: Rank[] = ['Cpl', 'LAC', 'AC-1', 'AC-2'];
 
-// Flights for 155 UASU BAF
-export const BAF_FLIGHTS = ['Mechanics', 'Avionics', 'GCS', 'Admin'];
+// Flights for units & offices
+export const BAF_FLIGHTS = ['Mechanics', 'Avionics', 'GCS', 'Admin', 'N/A'];
 

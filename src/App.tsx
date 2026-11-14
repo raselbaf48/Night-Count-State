@@ -95,7 +95,7 @@ import {
   type CloudSettings,
 } from './utils/firebaseSync';
 import { createBlankUnitRow, DISPOSAL_OPTIONS } from './data/initialData';
-import { FileSpreadsheet, Users, History, Megaphone, X, Lock } from 'lucide-react';
+import { FileSpreadsheet, Users, History, Megaphone, X, Lock, UserCheck } from 'lucide-react';
 import { OfflineIndicator } from './components/OfflineIndicator';
 
 const CLOUD_UPLOAD_DEBOUNCE_MS = 8000; // Always completes within 10 seconds of data change
@@ -347,9 +347,15 @@ export default function App() {
     (payload: SignUpPayload): { ok: boolean; error?: string } => {
       const cleanName = payload.name.trim();
       const cleanBd = payload.bdNo.replace(/\D/g, '').slice(0, 6);
-      const targetUnit = payload.unit.trim() || '155 UASU BAF';
-      const cleanPin = (payload.adminPin || '').trim();
+      const targetUnit = payload.unit.trim();
+      const targetWing = payload.wing.trim();
 
+      if (!targetUnit) {
+        return { ok: false, error: 'Please select or enter Office / Sqn / Unit.' };
+      }
+      if (!targetWing) {
+        return { ok: false, error: 'Please select or enter Wing.' };
+      }
       if (!cleanName) {
         return { ok: false, error: 'Please enter your name.' };
       }
@@ -364,6 +370,40 @@ export default function App() {
           error: `USER ID ${cleanBd} is already registered to ${conflict.airman.rank} ${conflict.airman.name} (${conflict.unit}). Please log in instead.`,
         };
       }
+
+      // Ensure selected/custom Wing & Unit exist in wings configuration
+      let nextWings = wings;
+      let wingsChanged = false;
+      const existingUnitWing = wings.find((w) =>
+        w.units.some((u) => u.toLowerCase() === targetUnit.toLowerCase())
+      );
+      const existingTargetWing = wings.find(
+        (w) => w.name.toLowerCase() === targetWing.toLowerCase()
+      );
+
+      if (!existingTargetWing) {
+        const newWing: WingConfig = {
+          id: `wing-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          name: targetWing,
+          shortName: targetWing.slice(0, 12).toUpperCase(),
+          units: existingUnitWing ? [] : [targetUnit],
+        };
+        nextWings = saveWingsConfig([...wings, newWing]);
+        setWings(nextWings);
+        wingsChanged = true;
+      } else if (!existingUnitWing) {
+        nextWings = saveWingsConfig(
+          wings.map((w) =>
+            w.id === existingTargetWing.id ? { ...w, units: [...w.units, targetUnit] } : w
+          )
+        );
+        setWings(nextWings);
+        wingsChanged = true;
+      }
+
+      const canonicalUnit =
+        existingUnitWing?.units.find((u) => u.toLowerCase() === targetUnit.toLowerCase()) ||
+        targetUnit;
 
       const operatorProfile: OperatorProfile = {
         bdNo: cleanBd,
@@ -380,25 +420,23 @@ export default function App() {
         bdNo: cleanBd,
         trade: payload.trade,
         flight: payload.flight,
-        unit: targetUnit,
+        unit: canonicalUnit,
         role: 'USER',
-        ...(cleanPin ? { adminPin: cleanPin } : {}),
         status: 'on_parade',
       };
 
-      if (findExistingBdConflict(dayState, cleanBd)) {
-        return { ok: false, error: `USER ID ${cleanBd} is already registered.` };
-      }
-
-      const currentList = getUnitAirmen(dayState, targetUnit);
+      const currentList = getUnitAirmen(dayState, canonicalUnit);
       const updatedList = sortAirmenBySeniority([...currentList, newAirman]);
-      const withAirman = setUnitAirmen(dayState, targetUnit, updatedList);
+      const withAirman = ensureDayStateHasConfiguredUnits(
+        setUnitAirmen(dayState, canonicalUnit, updatedList),
+        nextWings
+      );
       const syncedUnits = syncConsolidated155Row(withAirman.consolidatedUnits, withAirman);
       const entry = createStateUpdateLog(
         withAirman.date,
         'Nominal Roll',
-        targetUnit,
-        `Signed up & added ${payload.rank} ${cleanName} (BD ${cleanBd}) to ${targetUnit} Nominal Roll & User Management`,
+        canonicalUnit,
+        `Registered & added ${payload.rank} ${cleanName} (BD ${cleanBd}) to ${canonicalUnit} Nominal Roll & User Management`,
         operatorProfile
       );
       const nextLogs = [...(withAirman.updateLogs || []), entry].slice(-500);
@@ -418,13 +456,16 @@ export default function App() {
       markSettingsChangedForCloud(
         fullySynced.preparedBy,
         fullySynced.savedCustomDisposals ?? loadSavedCustomDisposals(),
-        { recentUserIds: nextRecent }
+        {
+          recentUserIds: nextRecent,
+          ...(wingsChanged ? { wings: nextWings } : {}),
+        }
       );
       void flushCloudUploads();
 
       return { ok: true };
     },
-    [dayState, flushCloudUploads, markDayChangedForCloud, markSettingsChangedForCloud]
+    [dayState, flushCloudUploads, markDayChangedForCloud, markSettingsChangedForCloud, wings]
   );
 
   const handleRemoveRecentUserId = React.useCallback(
@@ -460,6 +501,8 @@ export default function App() {
             : 'dark'
           : themePref;
       document.documentElement.setAttribute('data-theme', resolved);
+      document.documentElement.style.backgroundColor = '';
+      document.documentElement.style.color = '';
     };
     applyResolvedTheme();
     if (themePref === 'system' && media) {
@@ -713,15 +756,76 @@ export default function App() {
     switchToDate(newDateIso);
   };
 
-  const activeWing = wings.find((w) => w.id === activeWingId) || wings[0];
-  const isWingView = wings.some((w) => w.name === activeTab);
-  const activeUnitName = isWingView ? '155 UASU BAF' : activeTab;
-
   const currentRole: UserRole | 'GUEST' = verifiedOperator
     ? getUserRoleByBd(dayState, verifiedOperator.bdNo)
     : 'GUEST';
   const can = (key: RolePermissionKey): boolean =>
     hasRolePermission(currentRole, key, rolePermissions);
+
+  const loggedInUserUnit = React.useMemo(() => {
+    if (!verifiedOperator) return null;
+    const match = findExistingBdConflict(dayState, verifiedOperator.bdNo);
+    if (match?.unit) return match.unit;
+    const logs = dayState.updateLogs || [];
+    for (let i = logs.length - 1; i >= 0; i -= 1) {
+      if (logs[i]?.operator?.bdNo?.trim() === verifiedOperator.bdNo.trim() && logs[i].unitName) {
+        return logs[i].unitName;
+      }
+    }
+    return null;
+  }, [dayState, verifiedOperator]);
+
+  const isRestrictedUser = currentRole === 'USER' && Boolean(loggedInUserUnit);
+
+  const visibleWings = React.useMemo(() => {
+    if (!isRestrictedUser || !loggedInUserUnit) return wings;
+    const parentWing = wings.find((w) =>
+      w.units.some((u) => u.toLowerCase() === loggedInUserUnit.toLowerCase())
+    );
+    if (parentWing) {
+      const canonicalUnit =
+        parentWing.units.find((u) => u.toLowerCase() === loggedInUserUnit.toLowerCase()) ||
+        loggedInUserUnit;
+      return [
+        {
+          ...parentWing,
+          units: [canonicalUnit],
+        },
+      ];
+    }
+    const fallbackWing = wings[0];
+    return [
+      {
+        id: fallbackWing?.id || 'user-wing',
+        name: fallbackWing?.name || 'Flying Wing',
+        shortName: fallbackWing?.shortName || 'FLG WG',
+        units: [loggedInUserUnit],
+      },
+    ];
+  }, [isRestrictedUser, loggedInUserUnit, wings]);
+
+  useEffect(() => {
+    if (!isRestrictedUser || !loggedInUserUnit || visibleWings.length === 0) return;
+    const userWing = visibleWings[0];
+    const userCanonicalUnit = userWing.units[0] || loggedInUserUnit;
+    const isAllowedTab =
+      activeTab.toLowerCase() === userWing.name.toLowerCase() ||
+      activeTab.toLowerCase() === userCanonicalUnit.toLowerCase();
+    if (!isAllowedTab) {
+      setActiveWingId(userWing.id);
+      setActiveTab(userCanonicalUnit);
+      setUnitSubTab('state');
+      setWingSubTab('consolidated');
+    } else if (activeWingId !== userWing.id) {
+      setActiveWingId(userWing.id);
+    }
+  }, [isRestrictedUser, loggedInUserUnit, visibleWings, activeTab, activeWingId]);
+
+  const activeWing = visibleWings.find((w) => w.id === activeWingId) || visibleWings[0];
+  const isWingView = visibleWings.some((w) => w.name === activeTab);
+  const activeUnitName = isWingView
+    ? loggedInUserUnit || visibleWings[0]?.units[0] || '155 UASU BAF'
+    : activeTab;
 
   // Update Airman Disposal directly from Nominal Roll dropdown
   const handleUpdateAirmanDisposal = (airmanId: string, disposalVal: string) => {
@@ -1563,8 +1667,14 @@ export default function App() {
   };
 
   const activeUnitAirmenCount = getUnitAirmen(dayState, activeUnitName).length;
-  const totalDayLogsCount = dayState.updateLogs?.length || 0;
-  const activeUnitLogsCount = (dayState.updateLogs || []).filter(
+  const visibleDayLogs =
+    isRestrictedUser && loggedInUserUnit
+      ? (dayState.updateLogs || []).filter(
+          (entry) => entry.unitName.toLowerCase() === loggedInUserUnit.toLowerCase()
+        )
+      : dayState.updateLogs || [];
+  const totalDayLogsCount = visibleDayLogs.length;
+  const activeUnitLogsCount = visibleDayLogs.filter(
     (entry) => entry.unitName === activeUnitName
   ).length;
 
@@ -1590,19 +1700,16 @@ export default function App() {
       {/* Left Navigation Sidebar (Pic 2 Layout) */}
       {!isQuickEditActive && !isPrintOpen && (
         <Sidebar
-          wings={wings}
+          wings={visibleWings}
           activeWingId={activeWing.id}
           activeTab={activeTab}
-          wingSubTab={wingSubTab}
           dayState={dayState}
           operator={verifiedOperator}
           operatorRole={currentRole}
-          totalDayLogsCount={totalDayLogsCount}
+          brandTitle={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : '155 UASU BAF'}
           isCollapsed={isSidebarCollapsed}
           isMobileOpen={isMobileSidebarOpen}
           isSettingsOpen={isSettingsOpen}
-          canEditPreparedBy={can('editPreparedBy')}
-          canViewUpdateLog={can('viewUpdateLog')}
           canAccessSettings={can('accessSettings')}
           onToggleCollapse={() => setIsSidebarCollapsed((p) => !p)}
           onCloseMobile={() => setIsMobileSidebarOpen(false)}
@@ -1610,13 +1717,6 @@ export default function App() {
             setActiveWingId(wing.id);
             setActiveTab(wing.name);
             setWingSubTab('consolidated');
-          }}
-          onSelectPreparedBy={() =>
-            can('editPreparedBy') && requireOperatorAuth(() => setIsPreparedByOpen(true))
-          }
-          onSelectWingLog={() => {
-            setActiveTab(activeWing.name);
-            setWingSubTab('log');
           }}
           onSelectUnit={(unitName, wingId) => handleTabChange(unitName, wingId)}
           onOpenSettings={() => openSettingsModal('theme')}
@@ -1697,6 +1797,20 @@ export default function App() {
                       <FileSpreadsheet className="w-3.5 h-3.5" />
                       <span>Consolidated State</span>
                     </button>
+                    {can('editPreparedBy') && (
+                      <button
+                        type="button"
+                        onClick={() => requireOperatorAuth(() => setIsPreparedByOpen(true))}
+                        className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          isPreparedByOpen
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>Prepared By</span>
+                      </button>
+                    )}
                     {can('viewUpdateLog') && (
                       <button
                         type="button"
@@ -1725,6 +1839,7 @@ export default function App() {
                 can('viewUpdateLog') ? (
                   <StateUpdateLogView
                     dayState={dayState}
+                    lockedUnit={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
                     verifiedOperator={verifiedOperator}
                     onRequestChangeOperator={openOperatorSwitcher}
                   />
@@ -1877,6 +1992,7 @@ export default function App() {
                 <StateUpdateLogView
                   dayState={dayState}
                   unitFilter={activeUnitName}
+                  lockedUnit={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
                   verifiedOperator={verifiedOperator}
                   onRequestChangeOperator={openOperatorSwitcher}
                 />
@@ -1900,7 +2016,7 @@ export default function App() {
           <footer className="border-t border-[#142036] bg-[#060c17] px-4 sm:px-6 py-2.5 text-[11px] text-slate-400">
             <div className="w-full max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-1.5">
               <span className="font-semibold text-slate-300">
-                155 UASU BAF • Night Count State System
+                {isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : '155 UASU BAF'} • Night Count State System
               </span>
               <span className="text-slate-500">
                 Bangladesh Air Force • Confidential Personnel Night Count Register
@@ -1924,7 +2040,11 @@ export default function App() {
         canManageWings={can('manageWingsAndUnits')}
         canManageUsers={can('manageUsers')}
         canManageCloudAndNotice={can('manageCloudAndNotice')}
-        loginHistory={loginHistory}
+        loginHistory={
+          isRestrictedUser && verifiedOperator
+            ? loginHistory.filter((h) => h.bdNo === verifiedOperator.bdNo)
+            : loginHistory
+        }
         onRefreshLoginHistory={handlePullLatestFromCloud}
         onClearLoginHistory={handleClearLoginHistory}
         onSyncNowToCloud={handleSyncNowToCloud}
@@ -1933,7 +2053,8 @@ export default function App() {
         onSaveAppNotice={handleSaveAppNotice}
         onRequireAuth={requireOperatorAuth}
         dayState={dayState}
-        wings={wings}
+        wings={visibleWings}
+        restrictedUnitName={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
         onAddWing={handleAddWing}
         onDeleteWing={handleDeleteWing}
         onAddUnitToWing={handleAddUnitToWing}

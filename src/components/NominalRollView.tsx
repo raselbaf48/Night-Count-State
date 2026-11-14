@@ -314,6 +314,7 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   canDeleteAirman = true,
 }) => {
   const [selectedFlight, setSelectedFlight] = useState<string>('All');
+  const [selectedTrade, setSelectedTrade] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
@@ -328,6 +329,9 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   const [editFlight, setEditFlight] = useState('GCS');
   const [isCustomEditTrade, setIsCustomEditTrade] = useState(false);
   const [isCustomEditFlight, setIsCustomEditFlight] = useState(false);
+  const [focusedEditField, setFocusedEditField] = useState<
+    'bdNo' | 'rank' | 'name' | 'trade' | 'flight' | null
+  >(null);
   const [editError, setEditError] = useState<string | null>(null);
 
   // New airman form state - DEFAULT A KONO OPTION FILLUP THAKBE NA
@@ -338,7 +342,21 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   const [newBdNo, setNewBdNo] = useState('');
   const [isCustomNewTrade, setIsCustomNewTrade] = useState(false);
   const [isCustomNewFlight, setIsCustomNewFlight] = useState(false);
+  const [focusedAddField, setFocusedAddField] = useState<
+    'bdNo' | 'rank' | 'name' | 'trade' | 'flight' | null
+  >(null);
   const [addError, setAddError] = useState<string | null>(null);
+
+  const getModalFloatLabelClass = (isFieldFocused: boolean, value: string) => {
+    const isFloating = isFieldFocused || value.length > 0;
+    return `absolute left-3.5 pointer-events-none transition-all duration-150 uppercase tracking-wider font-bold z-10 ${
+      isFloating
+        ? `top-1 -translate-y-1/2 px-1.5 bg-[#0b1424] text-[10px] ${
+            isFieldFocused ? 'text-emerald-400' : 'text-slate-400'
+          }`
+        : 'top-[calc(50%+2px)] -translate-y-1/2 text-xs text-slate-400'
+    }`;
+  };
 
   // Bulk Excel import state
   const [bulkRows, setBulkRows] = useState<ParsedExcelAirmanRow[]>([]);
@@ -421,20 +439,61 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
     return [...orderedPresets, ...customList];
   }, [airmen]);
 
+  // Office has Flights only if at least one airman has a real Flight (not blank / N/A / -)
+  const officeHasFlights = useMemo(() => {
+    return nominalRollFlights.some((f) => {
+      const norm = f.trim().toUpperCase();
+      return norm !== '' && norm !== 'N/A' && norm !== '-';
+    });
+  }, [nominalRollFlights]);
+
+  // Trades filter options for offices without Flights
+  const nominalRollTrades = useMemo(() => {
+    const present = new Set<string>();
+    const customList: string[] = [];
+    airmen.forEach((a) => {
+      const t = a.trade?.trim();
+      if (!t || present.has(t)) return;
+      present.add(t);
+      if (!BAF_TRADES.includes(t)) {
+        customList.push(t);
+      }
+    });
+    const orderedPresets = BAF_TRADES.filter((t) => present.has(t));
+    return [...orderedPresets, ...customList];
+  }, [airmen]);
+
+  useEffect(() => {
+    setSelectedFlight('All');
+    setSelectedTrade('All');
+  }, [unitName]);
+
   useEffect(() => {
     if (selectedFlight !== 'All' && !nominalRollFlights.includes(selectedFlight)) {
       setSelectedFlight('All');
     }
   }, [selectedFlight, nominalRollFlights]);
 
-  const flightOptions = useMemo(() => ['All', ...nominalRollFlights], [nominalRollFlights]);
+  useEffect(() => {
+    if (selectedTrade !== 'All' && !nominalRollTrades.includes(selectedTrade)) {
+      setSelectedTrade('All');
+    }
+  }, [selectedTrade, nominalRollTrades]);
 
-  // Filter airmen based only on Flight and Search (Rank filter removed as requested)
+  const flightOptions = useMemo(() => ['All', ...nominalRollFlights], [nominalRollFlights]);
+  const tradeFilterOptions = useMemo(() => ['All', ...nominalRollTrades], [nominalRollTrades]);
+
+  // Filter airmen by Flight (or Trade when office has no Flight) and Search
   const filteredAirmen = useMemo(() => {
     return airmen.filter((airman) => {
-      // Flight filter
-      if (selectedFlight !== 'All') {
-        if (airman.flight !== selectedFlight) return false;
+      if (officeHasFlights) {
+        if (selectedFlight !== 'All' && airman.flight !== selectedFlight) {
+          return false;
+        }
+      } else {
+        if (selectedTrade !== 'All' && (airman.trade || '').trim() !== selectedTrade) {
+          return false;
+        }
       }
 
       // Search query filter
@@ -449,7 +508,7 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
 
       return true;
     });
-  }, [airmen, selectedFlight, searchQuery]);
+  }, [airmen, officeHasFlights, selectedFlight, selectedTrade, searchQuery]);
 
   // Open Add Airman modal with all fields completely blank
   const handleOpenAddModal = () => {
@@ -462,6 +521,7 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
       setNewBdNo('');
       setIsCustomNewTrade(false);
       setIsCustomNewFlight(false);
+      setFocusedAddField(null);
       setAddError(null);
       setBulkRows([]);
       setBulkFileName('');
@@ -516,9 +576,10 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
       setEditRank(airman.rank);
       setEditName(airman.name);
       setEditTrade(airman.trade || '');
-      setEditFlight(airman.flight || 'Admin');
+      setEditFlight(airman.flight || 'N/A');
       setIsCustomEditTrade(false);
       setIsCustomEditFlight(false);
+      setFocusedEditField(null);
       setEditError(null);
     };
     if (onRequireAuth) {
@@ -537,7 +598,7 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
     const cleanBd = editBdNo.trim();
     const cleanName = editName.trim();
     const cleanTrade = editTrade.trim();
-    const cleanFlight = editFlight.trim() || 'Admin';
+    const cleanFlight = editFlight.trim() || 'N/A';
 
     if (!/^\d{6}$/.test(cleanBd)) {
       setEditError('BD must be exactly 6 digits (numbers only, e.g. 474455).');
@@ -684,25 +745,46 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
           <div>
             {/* Modern Seamless Controls Bar (No nested box) */}
             <div className="px-6 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-slate-800/50 bg-[#070e1b]/40">
-              {/* Flight Filter Tabs */}
-              <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
-                <span className="text-xs text-slate-400 font-semibold mr-1 shrink-0">Flight:</span>
-                <div className="flex items-center gap-1 bg-slate-900/60 p-1 rounded-lg border border-slate-800/60">
-                  {flightOptions.map((flt) => (
-                    <button
-                      key={flt}
-                      onClick={() => setSelectedFlight(flt)}
-                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer ${
-                        selectedFlight === flt
-                          ? 'bg-blue-600 text-white shadow font-semibold'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                      }`}
-                    >
-                      {flt}
-                    </button>
-                  ))}
+              {/* Flight Filter Tabs (or Trade Filter Tabs when office has no Flights) */}
+              {officeHasFlights ? (
+                <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
+                  <span className="text-xs text-slate-400 font-semibold mr-1 shrink-0">Flight:</span>
+                  <div className="flex items-center gap-1 bg-slate-900/60 p-1 rounded-lg border border-slate-800/60">
+                    {flightOptions.map((flt) => (
+                      <button
+                        key={flt}
+                        onClick={() => setSelectedFlight(flt)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-all cursor-pointer ${
+                          selectedFlight === flt
+                            ? 'bg-blue-600 text-white shadow font-semibold'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        {flt}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
+                  <span className="text-xs text-slate-400 font-semibold mr-1 shrink-0">Trade:</span>
+                  <div className="flex items-center gap-1 bg-slate-900/60 p-1 rounded-lg border border-slate-800/60">
+                    {tradeFilterOptions.map((trd) => (
+                      <button
+                        key={trd}
+                        onClick={() => setSelectedTrade(trd)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-all cursor-pointer ${
+                          selectedTrade === trd
+                            ? 'bg-blue-600 text-white shadow font-semibold'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        {trd}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Minimal Modern Search Bar */}
               <div className="relative w-full sm:w-64">
@@ -794,7 +876,7 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
 
                           {/* Flight */}
                           <td className="py-3 px-4 text-slate-400 text-xs">
-                            {airman.flight || 'Admin'}
+                            {airman.flight || 'N/A'}
                           </td>
 
                           {/* Disposal Dropdown (Searchable + Persistent Custom Disposals with Cross button) */}
@@ -866,88 +948,122 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
               )}
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-slate-300 font-semibold">BD *</label>
-                    <span className="text-[10px] text-slate-500 font-sans">{editBdNo.length}/6</span>
-                  </div>
+                <div className="relative pt-1">
+                  <label
+                    htmlFor="edit-airman-bd"
+                    className={getModalFloatLabelClass(focusedEditField === 'bdNo', editBdNo)}
+                  >
+                    BD *
+                  </label>
                   <input
+                    id="edit-airman-bd"
                     type="text"
                     inputMode="numeric"
                     maxLength={6}
                     required
                     value={editBdNo}
+                    onFocus={() => setFocusedEditField('bdNo')}
+                    onBlur={() => setFocusedEditField((prev) => (prev === 'bdNo' ? null : prev))}
                     onChange={(e) => {
                       setEditBdNo(e.target.value.replace(/\D/g, '').slice(0, 6));
                       setEditError(null);
                     }}
-                    placeholder="474455"
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-sans"
+                    className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border tabular-nums ${
+                      focusedEditField === 'bdNo' ? 'border-emerald-500' : 'border-slate-700/80'
+                    }`}
                   />
-                  <p className="text-[10px] text-slate-500 mt-0.5">Must be 6 digits</p>
+                  <span className="absolute right-3 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] text-slate-400 tabular-nums pointer-events-none">
+                    {editBdNo.length}/6
+                  </span>
                 </div>
 
-                <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">Rank *</label>
-                  <select
-                    value={editRank}
-                    onChange={(e) => setEditRank(e.target.value as Rank)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500 cursor-pointer"
+                <div className="relative pt-1">
+                  <label
+                    htmlFor="edit-airman-rank"
+                    className={getModalFloatLabelClass(focusedEditField === 'rank', editRank)}
                   >
-                    <option value="Cpl">Cpl</option>
-                    <option value="LAC">LAC</option>
-                    <option value="AC">AC</option>
-                    <option value="AC-1">AC-1</option>
-                    <option value="AC-2">AC-2</option>
-                    {editingAirman.rank === 'Sgt' && <option value="Sgt">Sgt</option>}
-                    <option value="Flt Sgt">Flt Sgt</option>
-                    <option value="WO">WO</option>
-                    <option value="MWO">MWO</option>
+                    Rank *
+                  </label>
+                  <select
+                    id="edit-airman-rank"
+                    value={editRank}
+                    onFocus={() => setFocusedEditField('rank')}
+                    onBlur={() => setFocusedEditField((prev) => (prev === 'rank' ? null : prev))}
+                    onChange={(e) => setEditRank(e.target.value as Rank)}
+                    className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                      focusedEditField === 'rank' ? 'border-emerald-500' : 'border-slate-700/80'
+                    }`}
+                  >
+                    {BAF_RANKS_SELECT.map((r) => (
+                      <option key={r} value={r} className="bg-[#0b1424] text-slate-200">
+                        {r}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
 
-              <div>
-                <label className="text-slate-300 block mb-1 font-semibold">
+              <div className="relative pt-1">
+                <label
+                  htmlFor="edit-airman-name"
+                  className={getModalFloatLabelClass(focusedEditField === 'name', editName)}
+                >
                   Name *
                 </label>
                 <input
+                  id="edit-airman-name"
                   type="text"
                   required
                   value={editName}
+                  onFocus={() => setFocusedEditField('name')}
+                  onBlur={() => setFocusedEditField((prev) => (prev === 'name' ? null : prev))}
                   onChange={(e) => setEditName(e.target.value)}
-                  placeholder="Rasel"
-                  className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                  className={`w-full bg-[#08101e] rounded-xl px-3.5 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                    focusedEditField === 'name' ? 'border-emerald-500' : 'border-slate-700/80'
+                  }`}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-slate-300 font-semibold">Trade *</label>
-                    {isCustomEditTrade && (
+                <div className="relative pt-1">
+                  <label
+                    htmlFor="edit-airman-trade"
+                    className={getModalFloatLabelClass(focusedEditField === 'trade', editTrade)}
+                  >
+                    Trade *
+                  </label>
+                  {isCustomEditTrade ? (
+                    <>
+                      <input
+                        id="edit-airman-trade"
+                        type="text"
+                        required
+                        value={editTrade}
+                        onFocus={() => setFocusedEditField('trade')}
+                        onBlur={() => setFocusedEditField((prev) => (prev === 'trade' ? null : prev))}
+                        onChange={(e) => setEditTrade(e.target.value)}
+                        className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                          focusedEditField === 'trade' ? 'border-emerald-500' : 'border-slate-700/80'
+                        }`}
+                      />
                       <button
                         type="button"
-                        onClick={() => setIsCustomEditTrade(false)}
-                        className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                        onClick={() => {
+                          setIsCustomEditTrade(false);
+                          setFocusedEditField(null);
+                        }}
+                        className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
                       >
-                        Choose from list
+                        List
                       </button>
-                    )}
-                  </div>
-                  {isCustomEditTrade ? (
-                    <input
-                      type="text"
-                      required
-                      value={editTrade}
-                      onChange={(e) => setEditTrade(e.target.value)}
-                      placeholder="Enter Trade"
-                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                    />
+                    </>
                   ) : (
                     <select
+                      id="edit-airman-trade"
                       required
                       value={editTrade}
+                      onFocus={() => setFocusedEditField('trade')}
+                      onBlur={() => setFocusedEditField((prev) => (prev === 'trade' ? null : prev))}
                       onChange={(e) => {
                         if (e.target.value === '__CUSTOM__') {
                           setIsCustomEditTrade(true);
@@ -956,8 +1072,11 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                           setEditTrade(e.target.value);
                         }
                       }}
-                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500 cursor-pointer"
+                      className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                        focusedEditField === 'trade' ? 'border-emerald-500' : 'border-slate-700/80'
+                      }`}
                     >
+                      <option value="" disabled hidden></option>
                       {!availableTrades.includes(editTrade) && editTrade && (
                         <option value={editTrade}>{editTrade}</option>
                       )}
@@ -973,31 +1092,44 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                   )}
                 </div>
 
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-slate-300 font-semibold">Flight *</label>
-                    {isCustomEditFlight && (
+                <div className="relative pt-1">
+                  <label
+                    htmlFor="edit-airman-flight"
+                    className={getModalFloatLabelClass(focusedEditField === 'flight', editFlight)}
+                  >
+                    Flight *
+                  </label>
+                  {isCustomEditFlight ? (
+                    <>
+                      <input
+                        id="edit-airman-flight"
+                        type="text"
+                        required
+                        value={editFlight}
+                        onFocus={() => setFocusedEditField('flight')}
+                        onBlur={() => setFocusedEditField((prev) => (prev === 'flight' ? null : prev))}
+                        onChange={(e) => setEditFlight(e.target.value)}
+                        className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                          focusedEditField === 'flight' ? 'border-emerald-500' : 'border-slate-700/80'
+                        }`}
+                      />
                       <button
                         type="button"
-                        onClick={() => setIsCustomEditFlight(false)}
-                        className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                        onClick={() => {
+                          setIsCustomEditFlight(false);
+                          setFocusedEditField(null);
+                        }}
+                        className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
                       >
-                        Choose from list
+                        List
                       </button>
-                    )}
-                  </div>
-                  {isCustomEditFlight ? (
-                    <input
-                      type="text"
-                      required
-                      value={editFlight}
-                      onChange={(e) => setEditFlight(e.target.value)}
-                      placeholder="Enter Flight"
-                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                    />
+                    </>
                   ) : (
                     <select
+                      id="edit-airman-flight"
                       value={editFlight}
+                      onFocus={() => setFocusedEditField('flight')}
+                      onBlur={() => setFocusedEditField((prev) => (prev === 'flight' ? null : prev))}
                       onChange={(e) => {
                         if (e.target.value === '__CUSTOM__') {
                           setIsCustomEditFlight(true);
@@ -1006,8 +1138,11 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                           setEditFlight(e.target.value);
                         }
                       }}
-                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 focus:outline-none focus:border-blue-500 cursor-pointer"
+                      className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                        focusedEditField === 'flight' ? 'border-emerald-500' : 'border-slate-700/80'
+                      }`}
                     >
+                      <option value="" disabled hidden></option>
                       {!availableFlights.includes(editFlight) && editFlight && (
                         <option value={editFlight}>{editFlight}</option>
                       )}
@@ -1134,53 +1269,61 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                   </div>
                 )}
 
-                <form onSubmit={handleAddNewAirmanSubmit} className="space-y-3.5 text-xs">
+                <form onSubmit={handleAddNewAirmanSubmit} className="space-y-3 text-xs">
                   <div className="grid grid-cols-2 gap-3">
                     {/* BD (Must be exactly 6 digits) */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-slate-300 font-semibold">
-                          BD <span className="text-rose-400">*</span>
-                        </label>
-                        <span className="text-[10px] text-slate-500 font-sans">
-                          {newBdNo.length}/6
-                        </span>
-                      </div>
+                    <div className="relative pt-1">
+                      <label
+                        htmlFor="add-airman-bd"
+                        className={getModalFloatLabelClass(focusedAddField === 'bdNo', newBdNo)}
+                      >
+                        BD *
+                      </label>
                       <input
+                        id="add-airman-bd"
                         type="text"
                         inputMode="numeric"
                         maxLength={6}
                         required
-                        placeholder="474455"
                         value={newBdNo}
+                        onFocus={() => setFocusedAddField('bdNo')}
+                        onBlur={() => setFocusedAddField((prev) => (prev === 'bdNo' ? null : prev))}
                         onChange={(e) => {
                           setNewBdNo(e.target.value.replace(/\D/g, '').slice(0, 6));
                           setAddError(null);
                         }}
-                        className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-sans"
+                        className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border tabular-nums ${
+                          focusedAddField === 'bdNo' ? 'border-emerald-500' : 'border-slate-700/80'
+                        }`}
                       />
-                      <p className="text-[10px] text-slate-500 mt-0.5">Must be 6 digits</p>
+                      <span className="absolute right-3 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] text-slate-400 tabular-nums pointer-events-none">
+                        {newBdNo.length}/6
+                      </span>
                     </div>
 
-                    {/* Rank Dropdown (Cpl, LAC, AC, AC-1, AC-2) */}
-                    <div>
-                      <label className="text-slate-300 block mb-1 font-semibold">
-                        Rank <span className="text-rose-400">*</span>
+                    {/* Rank Dropdown (Cpl, LAC, AC-1, AC-2) */}
+                    <div className="relative pt-1">
+                      <label
+                        htmlFor="add-airman-rank"
+                        className={getModalFloatLabelClass(focusedAddField === 'rank', newRank)}
+                      >
+                        Rank *
                       </label>
                       <select
+                        id="add-airman-rank"
                         required
                         value={newRank}
+                        onFocus={() => setFocusedAddField('rank')}
+                        onBlur={() => setFocusedAddField((prev) => (prev === 'rank' ? null : prev))}
                         onChange={(e) => {
                           setNewRank(e.target.value);
                           setAddError(null);
                         }}
-                        className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                          !newRank ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                        className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                          focusedAddField === 'rank' ? 'border-emerald-500' : 'border-slate-700/80'
                         }`}
                       >
-                        <option value="" disabled>
-                          Select Rank *
-                        </option>
+                        <option value="" disabled hidden></option>
                         {BAF_RANKS_SELECT.map((r) => (
                           <option key={r} value={r} className="bg-[#0b1424] text-slate-200">
                             {r}
@@ -1191,59 +1334,79 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                   </div>
 
                   {/* Name */}
-                  <div>
-                    <label className="text-slate-300 block mb-1 font-semibold">
-                      Name <span className="text-rose-400">*</span>
+                  <div className="relative pt-1">
+                    <label
+                      htmlFor="add-airman-name"
+                      className={getModalFloatLabelClass(focusedAddField === 'name', newName)}
+                    >
+                      Name *
                     </label>
                     <input
+                      id="add-airman-name"
                       type="text"
                       required
-                      placeholder="Shakil"
                       value={newName}
+                      onFocus={() => setFocusedAddField('name')}
+                      onBlur={() => setFocusedAddField((prev) => (prev === 'name' ? null : prev))}
                       onChange={(e) => {
                         setNewName(e.target.value);
                         setAddError(null);
                       }}
-                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                      className={`w-full bg-[#08101e] rounded-xl px-3.5 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                        focusedAddField === 'name' ? 'border-emerald-500' : 'border-slate-700/80'
+                      }`}
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     {/* Trade (Preset + Custom) */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-slate-300 font-semibold">
-                          Trade <span className="text-rose-400">*</span>
-                        </label>
-                        {isCustomNewTrade && (
+                    <div className="relative pt-1">
+                      <label
+                        htmlFor="add-airman-trade"
+                        className={getModalFloatLabelClass(focusedAddField === 'trade', newTrade)}
+                      >
+                        Trade *
+                      </label>
+                      {isCustomNewTrade ? (
+                        <>
+                          <input
+                            id="add-airman-trade"
+                            type="text"
+                            required
+                            value={newTrade}
+                            onFocus={() => setFocusedAddField('trade')}
+                            onBlur={() =>
+                              setFocusedAddField((prev) => (prev === 'trade' ? null : prev))
+                            }
+                            onChange={(e) => {
+                              setNewTrade(e.target.value);
+                              setAddError(null);
+                            }}
+                            className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                              focusedAddField === 'trade' ? 'border-emerald-500' : 'border-slate-700/80'
+                            }`}
+                          />
                           <button
                             type="button"
                             onClick={() => {
                               setIsCustomNewTrade(false);
                               setNewTrade('');
+                              setFocusedAddField(null);
                             }}
-                            className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                            className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
                           >
-                            Select list
+                            List
                           </button>
-                        )}
-                      </div>
-                      {isCustomNewTrade ? (
-                        <input
-                          type="text"
-                          required
-                          placeholder="Enter Trade"
-                          value={newTrade}
-                          onChange={(e) => {
-                            setNewTrade(e.target.value);
-                            setAddError(null);
-                          }}
-                          className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                        />
+                        </>
                       ) : (
                         <select
+                          id="add-airman-trade"
                           required
                           value={newTrade}
+                          onFocus={() => setFocusedAddField('trade')}
+                          onBlur={() =>
+                            setFocusedAddField((prev) => (prev === 'trade' ? null : prev))
+                          }
                           onChange={(e) => {
                             if (e.target.value === '__CUSTOM__') {
                               setIsCustomNewTrade(true);
@@ -1253,13 +1416,11 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                             }
                             setAddError(null);
                           }}
-                          className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                            !newTrade ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                          className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                            focusedAddField === 'trade' ? 'border-emerald-500' : 'border-slate-700/80'
                           }`}
                         >
-                          <option value="" disabled>
-                            Select Trade *
-                          </option>
+                          <option value="" disabled hidden></option>
                           {availableTrades.map((t) => (
                             <option key={t} value={t} className="bg-[#0b1424] text-slate-200">
                               {t}
@@ -1276,40 +1437,53 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                     </div>
 
                     {/* Flight (Preset + Custom) */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-slate-300 font-semibold">
-                          Flight <span className="text-rose-400">*</span>
-                        </label>
-                        {isCustomNewFlight && (
+                    <div className="relative pt-1">
+                      <label
+                        htmlFor="add-airman-flight"
+                        className={getModalFloatLabelClass(focusedAddField === 'flight', newFlight)}
+                      >
+                        Flight *
+                      </label>
+                      {isCustomNewFlight ? (
+                        <>
+                          <input
+                            id="add-airman-flight"
+                            type="text"
+                            required
+                            value={newFlight}
+                            onFocus={() => setFocusedAddField('flight')}
+                            onBlur={() =>
+                              setFocusedAddField((prev) => (prev === 'flight' ? null : prev))
+                            }
+                            onChange={(e) => {
+                              setNewFlight(e.target.value);
+                              setAddError(null);
+                            }}
+                            className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors border ${
+                              focusedAddField === 'flight' ? 'border-emerald-500' : 'border-slate-700/80'
+                            }`}
+                          />
                           <button
                             type="button"
                             onClick={() => {
                               setIsCustomNewFlight(false);
                               setNewFlight('');
+                              setFocusedAddField(null);
                             }}
-                            className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer"
+                            className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
                           >
-                            Select list
+                            List
                           </button>
-                        )}
-                      </div>
-                      {isCustomNewFlight ? (
-                        <input
-                          type="text"
-                          required
-                          placeholder="Enter Flight"
-                          value={newFlight}
-                          onChange={(e) => {
-                            setNewFlight(e.target.value);
-                            setAddError(null);
-                          }}
-                          className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                        />
+                        </>
                       ) : (
                         <select
+                          id="add-airman-flight"
                           required
                           value={newFlight}
+                          onFocus={() => setFocusedAddField('flight')}
+                          onBlur={() =>
+                            setFocusedAddField((prev) => (prev === 'flight' ? null : prev))
+                          }
                           onChange={(e) => {
                             if (e.target.value === '__CUSTOM__') {
                               setIsCustomNewFlight(true);
@@ -1319,13 +1493,11 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                             }
                             setAddError(null);
                           }}
-                          className={`w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500 cursor-pointer ${
-                            !newFlight ? 'text-slate-500' : 'text-slate-100 font-semibold'
+                          className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-slate-100 focus:outline-none transition-colors cursor-pointer border ${
+                            focusedAddField === 'flight' ? 'border-emerald-500' : 'border-slate-700/80'
                           }`}
                         >
-                          <option value="" disabled>
-                            Select Flight *
-                          </option>
+                          <option value="" disabled hidden></option>
                           {availableFlights.map((f) => (
                             <option key={f} value={f} className="bg-[#0b1424] text-slate-200">
                               {f}

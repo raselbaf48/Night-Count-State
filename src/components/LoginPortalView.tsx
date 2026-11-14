@@ -3,9 +3,6 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
-  Eye,
-  EyeOff,
-  KeyRound,
   Lock,
   LogIn,
   Shield,
@@ -16,7 +13,6 @@ import {
 import { DayState, OperatorProfile, Rank, WingConfig } from '../types/nightCount';
 import { BAF_ALL_RANKS, BAF_FLIGHTS, BAF_TRADES } from '../data/initialData';
 import {
-  findAirmanByBd,
   findExistingBdConflict,
   findOperatorByBd,
   getAllConfiguredUnits,
@@ -24,13 +20,15 @@ import {
 
 export interface SignUpPayload {
   unit: string;
+  wing: string;
   rank: Rank;
   bdNo: string;
   name: string;
   trade: string;
   flight: string;
-  adminPin?: string;
 }
+
+type RegisterFieldKey = 'unit' | 'wing' | 'rank' | 'bdNo' | 'name' | 'trade' | 'flight';
 
 interface LoginPortalViewProps {
   dayState: DayState;
@@ -52,50 +50,42 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
   onGuestLogin,
 }) => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
-  const [userId, setUserId] = useState<string>(() => recentUserIds[0] || '');
-  const [adminPinInput, setAdminPinInput] = useState('');
-  const [showPin, setShowPin] = useState(false);
+  const [userId, setUserId] = useState<string>('');
   const [isFocused, setIsFocused] = useState(false);
   const [showRecentMenu, setShowRecentMenu] = useState(false);
-  const [isPinFocused, setIsPinFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [signUpSuccess, setSignUpSuccess] = useState<string | null>(null);
+  const [registerSuccess, setRegisterSuccess] = useState<string | null>(null);
 
   const allConfiguredUnits = useMemo(() => getAllConfiguredUnits(wings), [wings]);
-  const defaultUnit = allConfiguredUnits.includes('155 UASU BAF')
-    ? '155 UASU BAF'
-    : allConfiguredUnits[0] || '155 UASU BAF';
 
-  // Sign Up form state
-  const [signUpUnit, setSignUpUnit] = useState<string>(defaultUnit);
-  const [signUpRank, setSignUpRank] = useState<Rank>('LAC');
-  const [signUpBdNo, setSignUpBdNo] = useState<string>('');
-  const [signUpName, setSignUpName] = useState<string>('');
-  const [signUpTrade, setSignUpTrade] = useState<string>(BAF_TRADES[0]);
-  const [signUpFlight, setSignUpFlight] = useState<string>(BAF_FLIGHTS[0]);
-  const [signUpPin, setSignUpPin] = useState<string>('');
-  const [showSignUpPin, setShowSignUpPin] = useState(false);
-  const [signUpError, setSignUpError] = useState<string | null>(null);
+  // Register form state — NO box is pre-filled by default, all use floating notched-border labels
+  const [regUnit, setRegUnit] = useState<string>('');
+  const [isCustomUnit, setIsCustomUnit] = useState<boolean>(false);
+  const [regWing, setRegWing] = useState<string>('');
+  const [isCustomWing, setIsCustomWing] = useState<boolean>(false);
+  const [regRank, setRegRank] = useState<string>('');
+  const [regBdNo, setRegBdNo] = useState<string>('');
+  const [regName, setRegName] = useState<string>('');
+  const [regTrade, setRegTrade] = useState<string>('');
+  const [isCustomTrade, setIsCustomTrade] = useState<boolean>(false);
+  const [regFlight, setRegFlight] = useState<string>('');
+  const [focusedRegField, setFocusedRegField] = useState<RegisterFieldKey | null>(null);
+  const [registerError, setRegisterError] = useState<string | null>(null);
 
-  const hasUserEditedRef = useRef(false);
   const userIdSectionRef = useRef<HTMLDivElement>(null);
-  const pinInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync autofill with Cloud/Local recentUserIds when Cloud boot completes, unless user already typed
-  useEffect(() => {
-    if (!hasUserEditedRef.current) {
-      setUserId(recentUserIds[0] || '');
-    }
-  }, [recentUserIds]);
-
-  // Keep Sign Up unit valid if configured wings/units update from Cloud
-  useEffect(() => {
-    if (allConfiguredUnits.length > 0 && !allConfiguredUnits.includes(signUpUnit)) {
-      setSignUpUnit(
-        allConfiguredUnits.includes('155 UASU BAF') ? '155 UASU BAF' : allConfiguredUnits[0]
+  // Filter unit options when an existing Wing is selected; otherwise show all configured units
+  const unitOptionsForSelectedWing = useMemo(() => {
+    if (!isCustomWing && regWing.trim()) {
+      const matchedWing = wings.find(
+        (w) => w.name.toLowerCase() === regWing.trim().toLowerCase()
       );
+      if (matchedWing) {
+        return matchedWing.units;
+      }
     }
-  }, [allConfiguredUnits, signUpUnit]);
+    return allConfiguredUnits;
+  }, [allConfiguredUnits, isCustomWing, regWing, wings]);
 
   // Close Recent Accounts dropdown when clicking outside the User ID section
   useEffect(() => {
@@ -109,49 +99,27 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
     return () => document.removeEventListener('mousedown', handleOutsideMouseDown);
   }, [showRecentMenu]);
 
-  const matchedAirman = /^\d{6}$/.test(userId.trim()) ? findAirmanByBd(dayState, userId.trim()) : null;
-  const requiresPin = Boolean(matchedAirman?.adminPin && matchedAirman.adminPin.trim().length > 0);
-
   const handleUserIdChange = (raw: string) => {
-    hasUserEditedRef.current = true;
     const digits = raw.replace(/\D/g, '').slice(0, 6);
     setUserId(digits);
-    setAdminPinInput('');
-    setShowPin(false);
     setError(null);
-    setSignUpSuccess(null);
+    setRegisterSuccess(null);
   };
 
-  const loginWithId = (rawId: string, providedPin?: string) => {
+  const loginWithId = (rawId: string) => {
     setError(null);
     const cleanId = rawId.trim();
     if (!/^\d{6}$/.test(cleanId)) {
-      setError('Enter your 6-digit BD No as User ID (e.g. 474455).');
+      setError('Enter your 6-digit BD No as User ID.');
       return;
     }
 
     const matched = findOperatorByBd(dayState, cleanId);
     if (!matched) {
       setError(
-        'User ID (BD No) not found in Nominal Roll. Please Sign Up or use Guest Login.'
+        'User ID (BD No) not found in Nominal Roll. Please Register or use Guest Login.'
       );
       return;
-    }
-
-    const airmanRecord = findAirmanByBd(dayState, cleanId);
-    const expectedPin = airmanRecord?.adminPin?.trim();
-    if (expectedPin) {
-      const candidatePin = (providedPin ?? adminPinInput).trim();
-      if (!candidatePin) {
-        setError(
-          `Enter Admin Login Portal PIN for ${matched.rank} ${matched.name} (${cleanId}).`
-        );
-        return;
-      }
-      if (candidatePin !== expectedPin) {
-        setError('Incorrect Admin Login Portal PIN. Please try again.');
-        return;
-      }
     }
 
     onLogin(matched);
@@ -160,94 +128,161 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setShowRecentMenu(false);
-    loginWithId(userId, adminPinInput);
+    loginWithId(userId);
   };
 
   const handleSelectRecent = (id: string) => {
-    hasUserEditedRef.current = true;
     setUserId(id);
-    setAdminPinInput('');
-    setShowPin(false);
     setShowRecentMenu(false);
-    setSignUpSuccess(null);
-    const airmanRecord = findAirmanByBd(dayState, id);
-    if (airmanRecord?.adminPin?.trim()) {
-      setError(null);
-      window.setTimeout(() => {
-        pinInputRef.current?.focus();
-      }, 0);
-      return;
-    }
-    loginWithId(id, '');
+    setRegisterSuccess(null);
+    loginWithId(id);
   };
 
-  const openSignUpMode = () => {
+  const resetRegisterForm = () => {
+    setRegUnit('');
+    setIsCustomUnit(false);
+    setRegWing('');
+    setIsCustomWing(false);
+    setRegRank('');
+    setRegBdNo('');
+    setRegName('');
+    setRegTrade('');
+    setIsCustomTrade(false);
+    setRegFlight('');
+    setFocusedRegField(null);
+    setRegisterError(null);
+  };
+
+  const openRegisterMode = () => {
     setError(null);
-    setSignUpSuccess(null);
-    setSignUpError(null);
+    setRegisterSuccess(null);
     setShowRecentMenu(false);
-    if (/^\d{6}$/.test(userId.trim()) && !findExistingBdConflict(dayState, userId.trim())) {
-      setSignUpBdNo(userId.trim());
-    }
+    resetRegisterForm();
     setMode('signup');
   };
 
-  const handleSignUpSubmit = (e: React.FormEvent) => {
+  const handleUnitSelectChange = (val: string) => {
+    setRegisterError(null);
+    if (val === '__CUSTOM__') {
+      setIsCustomUnit(true);
+      setRegUnit('');
+      return;
+    }
+    setRegUnit(val);
+    if (!isCustomWing && val) {
+      const parentWing = wings.find((w) =>
+        w.units.some((u) => u.toLowerCase() === val.toLowerCase())
+      );
+      if (parentWing) {
+        setRegWing(parentWing.name);
+      }
+    }
+  };
+
+  const handleWingSelectChange = (val: string) => {
+    setRegisterError(null);
+    if (val === '__CUSTOM__') {
+      setIsCustomWing(true);
+      setRegWing('');
+      return;
+    }
+    setRegWing(val);
+    if (!isCustomUnit && regUnit) {
+      const matchedWing = wings.find((w) => w.name.toLowerCase() === val.toLowerCase());
+      if (
+        matchedWing &&
+        !matchedWing.units.some((u) => u.toLowerCase() === regUnit.toLowerCase())
+      ) {
+        setRegUnit('');
+      }
+    }
+  };
+
+  const handleRegisterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setSignUpError(null);
+    setRegisterError(null);
 
-    const cleanBd = signUpBdNo.replace(/\D/g, '').slice(0, 6);
-    const cleanName = signUpName.trim();
-    const cleanPin = signUpPin.replace(/\s/g, '').slice(0, 12);
+    const cleanUnit = regUnit.trim();
+    const cleanWing = regWing.trim();
+    const cleanBd = regBdNo.replace(/\D/g, '').slice(0, 6);
+    const cleanName = regName.trim();
 
+    if (!cleanUnit) {
+      setRegisterError('Please select or enter Office / Sqn / Unit.');
+      return;
+    }
+    if (!cleanWing) {
+      setRegisterError('Please select or enter Wing.');
+      return;
+    }
+    if (!regRank) {
+      setRegisterError('Please select your Rank.');
+      return;
+    }
     if (!/^\d{6}$/.test(cleanBd)) {
-      setSignUpError('USER ID (BD No) must be exactly 6 digits (e.g. 474455).');
+      setRegisterError('USER ID (BD No) must be exactly 6 digits.');
       return;
     }
     if (!cleanName) {
-      setSignUpError('Please enter your name.');
+      setRegisterError('Please enter your Name.');
+      return;
+    }
+    const cleanTrade = regTrade.trim();
+    if (!cleanTrade) {
+      setRegisterError('Please select or enter your Trade.');
+      return;
+    }
+    if (!regFlight) {
+      setRegisterError('Please select your Flight.');
+      return;
+    }
+
+    if (findExistingBdConflict(dayState, cleanBd)) {
+      setRegisterError(`USER ID ${cleanBd} is already registered. Please log in instead.`);
       return;
     }
 
     const res = onSignUp({
-      unit: signUpUnit,
-      rank: signUpRank,
+      unit: cleanUnit,
+      wing: cleanWing,
+      rank: regRank as Rank,
       bdNo: cleanBd,
       name: cleanName,
-      trade: signUpTrade,
-      flight: signUpFlight,
-      ...(cleanPin ? { adminPin: cleanPin } : {}),
+      trade: cleanTrade,
+      flight: regFlight,
     });
 
     if (!res.ok) {
-      setSignUpError(res.error || 'Could not complete sign up.');
+      setRegisterError(res.error || 'Could not complete registration.');
       return;
     }
 
-    hasUserEditedRef.current = true;
-    setUserId(cleanBd);
-    setAdminPinInput('');
-    setShowPin(false);
-    setSignUpBdNo('');
-    setSignUpName('');
-    setSignUpPin('');
-    setShowSignUpPin(false);
-    setSignUpError(null);
+    const registeredRank = regRank;
+    resetRegisterForm();
+    setUserId('');
     setError(null);
-    setSignUpSuccess(
-      `Account created for ${signUpRank} ${cleanName} (BD/${cleanBd}) and added to ${signUpUnit} Nominal Roll & User Management. Log in with USER ID ${cleanBd}.`
+    setRegisterSuccess(
+      `Registered ${registeredRank} ${cleanName} (BD/${cleanBd}) and added to ${cleanUnit} (${cleanWing}) Nominal Roll & User Management. Log in with USER ID ${cleanBd}.`
     );
     setMode('login');
-
-    if (cleanPin) {
-      window.setTimeout(() => {
-        pinInputRef.current?.focus();
-      }, 0);
-    }
   };
 
+  const getFloatLabelClass = (field: RegisterFieldKey, value: string, extraLeft = 'left-3.5') => {
+    const isFieldFocused = focusedRegField === field;
+    const isFloating = isFieldFocused || value.length > 0;
+    return `absolute ${extraLeft} pointer-events-none transition-all duration-150 uppercase tracking-wider font-bold z-10 ${
+      isFloating
+        ? `top-1 -translate-y-1/2 px-1.5 bg-[#0d1728] text-[10px] ${
+            isFieldFocused ? 'text-emerald-400' : 'text-slate-400'
+          }`
+        : 'top-[calc(50%+2px)] -translate-y-1/2 text-xs text-slate-400'
+    }`;
+  };
+
+  const getFieldBorderClass = (field: RegisterFieldKey) =>
+    focusedRegField === field ? 'border-emerald-500' : 'border-slate-700/80';
+
   const isLabelFloating = isFocused || userId.length > 0;
-  const isPinLabelFloating = isPinFocused || adminPinInput.length > 0;
   const quickAccessIds = recentUserIds.slice(0, 3);
 
   return (
@@ -263,7 +298,7 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
 
       <div
         className={`relative w-full ${
-          mode === 'signup' ? 'max-w-[440px]' : 'max-w-[380px]'
+          mode === 'signup' ? 'max-w-[460px]' : 'max-w-[380px]'
         } bg-[#0d1728] border border-slate-800/90 rounded-2xl p-7 sm:p-8 shadow-2xl shadow-black/70 transition-all`}
       >
         {/* Crest & Portal Title */}
@@ -276,11 +311,11 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
 
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-[10px] font-bold tracking-wider uppercase">
             <Shield className="w-3 h-3 shrink-0" />
-            <span>{mode === 'signup' ? 'USER SIGN UP' : 'USER LOGIN PORTAL'}</span>
+            <span>{mode === 'signup' ? 'USER REGISTER' : 'USER LOGIN PORTAL'}</span>
           </div>
 
           <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-wide uppercase mt-3">
-            BAS BASE ZHR
+            BAF BASE ZHR
           </h1>
           <p className="text-[11px] text-slate-400 mt-0.5">
             {mode === 'signup'
@@ -292,10 +327,10 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
         {mode === 'login' ? (
           /* USER ID Login Form */
           <form onSubmit={handleSubmit} className="space-y-3.5">
-            {signUpSuccess && (
+            {registerSuccess && (
               <div className="flex items-start gap-2 p-2.5 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs">
                 <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
-                <span>{signUpSuccess}</span>
+                <span>{registerSuccess}</span>
               </div>
             )}
 
@@ -346,7 +381,7 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
                 />
               </div>
 
-              {/* Recent Accounts Box — inline below USER ID (never covers PIN box), shown ONLY on USER ID click/focus */}
+              {/* Recent Accounts Box — shown ONLY on USER ID click/focus */}
               {showRecentMenu && quickAccessIds.length > 0 && (
                 <div className="bg-[#08101e] border border-slate-700/90 rounded-xl overflow-hidden">
                   <div className="px-3.5 pt-2.5 pb-1.5 text-[10px] font-bold tracking-wider uppercase text-slate-400 border-b border-slate-800/60">
@@ -381,9 +416,7 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
                               e.stopPropagation();
                               onRemoveRecentUserId(recentId);
                               if (userId === recentId) {
-                                hasUserEditedRef.current = true;
                                 setUserId('');
-                                setAdminPinInput('');
                               }
                             }}
                             title={`Remove ${recentId} from recent accounts`}
@@ -399,61 +432,6 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
               )}
             </div>
 
-            {/* Admin Login Portal PIN (shown only if this User ID has a PIN configured) */}
-            {requiresPin && (
-              <div className="relative pt-1">
-                <label
-                  htmlFor="portal-admin-pin"
-                  className={`absolute left-3.5 pointer-events-none transition-all duration-150 uppercase tracking-wider font-bold flex items-center gap-1 ${
-                    isPinLabelFloating
-                      ? `top-1 -translate-y-1/2 px-1.5 bg-[#0d1728] text-[10px] ${
-                          isPinFocused ? 'text-emerald-400' : 'text-slate-400'
-                        }`
-                      : 'top-[calc(50%+2px)] -translate-y-1/2 text-xs text-slate-400'
-                  }`}
-                >
-                  <KeyRound className="w-3 h-3" />
-                  <span>ADMIN LOGIN PIN</span>
-                </label>
-                <input
-                  ref={pinInputRef}
-                  id="portal-admin-pin"
-                  type={showPin ? 'text' : 'password'}
-                  inputMode="numeric"
-                  maxLength={12}
-                  value={adminPinInput}
-                  onFocus={() => {
-                    setIsPinFocused(true);
-                    setShowRecentMenu(false);
-                  }}
-                  onBlur={() => setIsPinFocused(false)}
-                  onChange={(e) => {
-                    const nextPin = e.target.value.replace(/\s/g, '').slice(0, 12);
-                    setAdminPinInput(nextPin);
-                    setError(null);
-                    const expectedPin = matchedAirman?.adminPin?.trim();
-                    if (expectedPin && nextPin.trim() === expectedPin) {
-                      loginWithId(userId, nextPin);
-                    }
-                  }}
-                  aria-label="ADMIN LOGIN PIN"
-                  className={`w-full bg-[#08101e] rounded-xl pl-4 pr-11 py-3 text-sm font-semibold text-white tracking-widest focus:outline-none transition-colors tabular-nums border ${
-                    isPinFocused ? 'border-emerald-500' : 'border-slate-700/80'
-                  }`}
-                />
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => setShowPin((p) => !p)}
-                  aria-label={showPin ? 'Hide Admin Login PIN' : 'Show Admin Login PIN'}
-                  title={showPin ? 'Hide PIN' : 'Show PIN'}
-                  className="absolute right-3 top-[calc(50%+2px)] -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
-                >
-                  {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            )}
-
             <button
               type="submit"
               className="w-full py-3 px-4 rounded-xl bg-[#00c853] hover:bg-[#00e05d] text-slate-950 font-bold text-xs sm:text-sm tracking-wider uppercase flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-950/50"
@@ -464,11 +442,11 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
 
             <button
               type="button"
-              onClick={openSignUpMode}
+              onClick={openRegisterMode}
               className="w-full py-2.5 px-4 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/35 text-emerald-300 hover:text-emerald-200 text-xs font-bold tracking-wide flex items-center justify-center gap-2 transition-colors cursor-pointer"
             >
               <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Sign Up</span>
+              <span>Register</span>
             </button>
 
             <button
@@ -481,173 +459,328 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
             </button>
           </form>
         ) : (
-          /* Sign Up Form — adds user directly to selected Office Nominal Roll & User Management */
-          <form onSubmit={handleSignUpSubmit} className="space-y-3">
-            {signUpError && (
+          /* Register Form — Floating notched-border labels matching Login Portal, zero default fills */
+          <form onSubmit={handleRegisterSubmit} className="space-y-3">
+            {registerError && (
               <div className="flex items-start gap-2 p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs">
                 <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-                <span>{signUpError}</span>
+                <span>{registerError}</span>
               </div>
             )}
 
-            <div>
-              <label
-                htmlFor="signup-unit"
-                className="block text-[10px] font-bold tracking-wider uppercase text-slate-400 mb-1"
-              >
-                Office / Sqn / Unit
-              </label>
-              <select
-                id="signup-unit"
-                value={signUpUnit}
-                onChange={(e) => {
-                  setSignUpUnit(e.target.value);
-                  setSignUpError(null);
-                }}
-                className="w-full bg-[#08101e] border border-slate-700/80 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-white outline-none transition-colors"
-              >
-                {allConfiguredUnits.map((unitName) => (
-                  <option key={`signup-u-${unitName}`} value={unitName}>
-                    {unitName}
-                  </option>
-                ))}
-              </select>
+            {/* Office / Sqn / Unit (with Custom at bottom) + Wing side-by-side */}
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="relative pt-1">
+                <label
+                  htmlFor="register-unit"
+                  className={getFloatLabelClass('unit', regUnit)}
+                >
+                  Sqn / Unit
+                </label>
+                {isCustomUnit ? (
+                  <>
+                    <input
+                      id="register-unit"
+                      type="text"
+                      value={regUnit}
+                      onFocus={() => setFocusedRegField('unit')}
+                      onBlur={() => setFocusedRegField((prev) => (prev === 'unit' ? null : prev))}
+                      onChange={(e) => {
+                        setRegUnit(e.target.value);
+                        setRegisterError(null);
+                      }}
+                      className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-white focus:outline-none transition-colors border ${getFieldBorderClass(
+                        'unit'
+                      )}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomUnit(false);
+                        setRegUnit('');
+                        setFocusedRegField(null);
+                      }}
+                      className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                    >
+                      List
+                    </button>
+                  </>
+                ) : (
+                  <select
+                    id="register-unit"
+                    value={regUnit}
+                    onFocus={() => setFocusedRegField('unit')}
+                    onBlur={() => setFocusedRegField((prev) => (prev === 'unit' ? null : prev))}
+                    onChange={(e) => handleUnitSelectChange(e.target.value)}
+                    className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-white focus:outline-none transition-colors cursor-pointer border ${getFieldBorderClass(
+                      'unit'
+                    )}`}
+                  >
+                    <option value="" disabled hidden></option>
+                    {unitOptionsForSelectedWing.map((unitName) => (
+                      <option
+                        key={`reg-u-${unitName}`}
+                        value={unitName}
+                        className="bg-[#0b1424] text-slate-100"
+                      >
+                        {unitName}
+                      </option>
+                    ))}
+                    <option
+                      value="__CUSTOM__"
+                      className="bg-[#0b1424] text-emerald-400 font-semibold"
+                    >
+                      + Custom...
+                    </option>
+                  </select>
+                )}
+              </div>
+
+              <div className="relative pt-1">
+                <label
+                  htmlFor="register-wing"
+                  className={getFloatLabelClass('wing', regWing)}
+                >
+                  Wing
+                </label>
+                {isCustomWing ? (
+                  <>
+                    <input
+                      id="register-wing"
+                      type="text"
+                      value={regWing}
+                      onFocus={() => setFocusedRegField('wing')}
+                      onBlur={() => setFocusedRegField((prev) => (prev === 'wing' ? null : prev))}
+                      onChange={(e) => {
+                        setRegWing(e.target.value);
+                        setRegisterError(null);
+                      }}
+                      className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-white focus:outline-none transition-colors border ${getFieldBorderClass(
+                        'wing'
+                      )}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomWing(false);
+                        setRegWing('');
+                        setFocusedRegField(null);
+                      }}
+                      className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                    >
+                      List
+                    </button>
+                  </>
+                ) : (
+                  <select
+                    id="register-wing"
+                    value={regWing}
+                    onFocus={() => setFocusedRegField('wing')}
+                    onBlur={() => setFocusedRegField((prev) => (prev === 'wing' ? null : prev))}
+                    onChange={(e) => handleWingSelectChange(e.target.value)}
+                    className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-white focus:outline-none transition-colors cursor-pointer border ${getFieldBorderClass(
+                      'wing'
+                    )}`}
+                  >
+                    <option value="" disabled hidden></option>
+                    {wings.map((w) => (
+                      <option
+                        key={`reg-w-${w.id}`}
+                        value={w.name}
+                        className="bg-[#0b1424] text-slate-100"
+                      >
+                        {w.name}
+                      </option>
+                    ))}
+                    <option
+                      value="__CUSTOM__"
+                      className="bg-[#0b1424] text-emerald-400 font-semibold"
+                    >
+                      + Custom...
+                    </option>
+                  </select>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
-              <div>
+              <div className="relative pt-1">
                 <label
-                  htmlFor="signup-rank"
-                  className="block text-[10px] font-bold tracking-wider uppercase text-slate-400 mb-1"
+                  htmlFor="register-rank"
+                  className={getFloatLabelClass('rank', regRank)}
                 >
                   Rank
                 </label>
                 <select
-                  id="signup-rank"
-                  value={signUpRank}
-                  onChange={(e) => setSignUpRank(e.target.value as Rank)}
-                  className="w-full bg-[#08101e] border border-slate-700/80 focus:border-emerald-500 rounded-xl px-3 py-2.5 text-xs font-semibold text-white outline-none transition-colors"
+                  id="register-rank"
+                  value={regRank}
+                  onFocus={() => setFocusedRegField('rank')}
+                  onBlur={() => setFocusedRegField((prev) => (prev === 'rank' ? null : prev))}
+                  onChange={(e) => {
+                    setRegRank(e.target.value);
+                    setRegisterError(null);
+                  }}
+                  className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-white focus:outline-none transition-colors cursor-pointer border ${getFieldBorderClass(
+                    'rank'
+                  )}`}
                 >
+                  <option value="" disabled hidden></option>
                   {BAF_ALL_RANKS.map((r) => (
-                    <option key={`signup-r-${r}`} value={r}>
+                    <option key={`reg-r-${r}`} value={r} className="bg-[#0b1424] text-slate-100">
                       {r}
                     </option>
                   ))}
                 </select>
               </div>
-              <div>
+
+              <div className="relative pt-1">
                 <label
-                  htmlFor="signup-bd"
-                  className="block text-[10px] font-bold tracking-wider uppercase text-slate-400 mb-1"
+                  htmlFor="register-bd"
+                  className={getFloatLabelClass('bdNo', regBdNo)}
                 >
                   USER ID (BD No)
                 </label>
                 <input
-                  id="signup-bd"
+                  id="register-bd"
                   type="text"
                   inputMode="numeric"
                   maxLength={6}
-                  value={signUpBdNo}
+                  value={regBdNo}
+                  onFocus={() => setFocusedRegField('bdNo')}
+                  onBlur={() => setFocusedRegField((prev) => (prev === 'bdNo' ? null : prev))}
                   onChange={(e) => {
-                    setSignUpBdNo(e.target.value.replace(/\D/g, '').slice(0, 6));
-                    setSignUpError(null);
+                    setRegBdNo(e.target.value.replace(/\D/g, '').slice(0, 6));
+                    setRegisterError(null);
                   }}
-                  placeholder="e.g. 474455"
-                  className="w-full bg-[#08101e] border border-slate-700/80 focus:border-emerald-500 rounded-xl px-3 py-2.5 text-xs font-semibold text-white tracking-wider tabular-nums outline-none transition-colors"
+                  className={`w-full bg-[#08101e] rounded-xl px-3.5 py-3 text-xs font-semibold text-white tracking-wider tabular-nums focus:outline-none transition-colors border ${getFieldBorderClass(
+                    'bdNo'
+                  )}`}
                 />
               </div>
             </div>
 
-            <div>
+            <div className="relative pt-1">
               <label
-                htmlFor="signup-name"
-                className="block text-[10px] font-bold tracking-wider uppercase text-slate-400 mb-1"
+                htmlFor="register-name"
+                className={getFloatLabelClass('name', regName)}
               >
                 Name
               </label>
               <input
-                id="signup-name"
+                id="register-name"
                 type="text"
-                value={signUpName}
+                value={regName}
+                onFocus={() => setFocusedRegField('name')}
+                onBlur={() => setFocusedRegField((prev) => (prev === 'name' ? null : prev))}
                 onChange={(e) => {
-                  setSignUpName(e.target.value);
-                  setSignUpError(null);
+                  setRegName(e.target.value);
+                  setRegisterError(null);
                 }}
-                placeholder="e.g. Rasel"
-                className="w-full bg-[#08101e] border border-slate-700/80 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-white outline-none transition-colors"
+                className={`w-full bg-[#08101e] rounded-xl px-3.5 py-3 text-xs font-semibold text-white focus:outline-none transition-colors border ${getFieldBorderClass(
+                  'name'
+                )}`}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
-              <div>
+              <div className="relative pt-1">
                 <label
-                  htmlFor="signup-trade"
-                  className="block text-[10px] font-bold tracking-wider uppercase text-slate-400 mb-1"
+                  htmlFor="register-trade"
+                  className={getFloatLabelClass('trade', regTrade)}
                 >
                   Trade
                 </label>
-                <select
-                  id="signup-trade"
-                  value={signUpTrade}
-                  onChange={(e) => setSignUpTrade(e.target.value)}
-                  className="w-full bg-[#08101e] border border-slate-700/80 focus:border-emerald-500 rounded-xl px-3 py-2.5 text-xs font-semibold text-white outline-none transition-colors"
-                >
-                  {BAF_TRADES.map((t) => (
-                    <option key={`signup-t-${t}`} value={t}>
-                      {t}
+                {isCustomTrade ? (
+                  <>
+                    <input
+                      id="register-trade"
+                      type="text"
+                      value={regTrade}
+                      onFocus={() => setFocusedRegField('trade')}
+                      onBlur={() => setFocusedRegField((prev) => (prev === 'trade' ? null : prev))}
+                      onChange={(e) => {
+                        setRegTrade(e.target.value);
+                        setRegisterError(null);
+                      }}
+                      className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-11 py-3 text-xs font-semibold text-white focus:outline-none transition-colors border ${getFieldBorderClass(
+                        'trade'
+                      )}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomTrade(false);
+                        setRegTrade('');
+                        setFocusedRegField(null);
+                      }}
+                      className="absolute right-2.5 top-[calc(50%+2px)] -translate-y-1/2 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                    >
+                      List
+                    </button>
+                  </>
+                ) : (
+                  <select
+                    id="register-trade"
+                    value={regTrade}
+                    onFocus={() => setFocusedRegField('trade')}
+                    onBlur={() => setFocusedRegField((prev) => (prev === 'trade' ? null : prev))}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setRegisterError(null);
+                      if (val === '__CUSTOM__') {
+                        setIsCustomTrade(true);
+                        setRegTrade('');
+                        return;
+                      }
+                      setRegTrade(val);
+                    }}
+                    className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-white focus:outline-none transition-colors cursor-pointer border ${getFieldBorderClass(
+                      'trade'
+                    )}`}
+                  >
+                    <option value="" disabled hidden></option>
+                    {BAF_TRADES.map((t) => (
+                      <option key={`reg-t-${t}`} value={t} className="bg-[#0b1424] text-slate-100">
+                        {t}
+                      </option>
+                    ))}
+                    <option
+                      value="__CUSTOM__"
+                      className="bg-[#0b1424] text-emerald-400 font-semibold"
+                    >
+                      + Custom...
                     </option>
-                  ))}
-                </select>
+                  </select>
+                )}
               </div>
-              <div>
+
+              <div className="relative pt-1">
                 <label
-                  htmlFor="signup-flight"
-                  className="block text-[10px] font-bold tracking-wider uppercase text-slate-400 mb-1"
+                  htmlFor="register-flight"
+                  className={getFloatLabelClass('flight', regFlight)}
                 >
                   Flight
                 </label>
                 <select
-                  id="signup-flight"
-                  value={signUpFlight}
-                  onChange={(e) => setSignUpFlight(e.target.value)}
-                  className="w-full bg-[#08101e] border border-slate-700/80 focus:border-emerald-500 rounded-xl px-3 py-2.5 text-xs font-semibold text-white outline-none transition-colors"
+                  id="register-flight"
+                  value={regFlight}
+                  onFocus={() => setFocusedRegField('flight')}
+                  onBlur={() => setFocusedRegField((prev) => (prev === 'flight' ? null : prev))}
+                  onChange={(e) => {
+                    setRegFlight(e.target.value);
+                    setRegisterError(null);
+                  }}
+                  className={`w-full bg-[#08101e] rounded-xl pl-3.5 pr-7 py-3 text-xs font-semibold text-white focus:outline-none transition-colors cursor-pointer border ${getFieldBorderClass(
+                    'flight'
+                  )}`}
                 >
+                  <option value="" disabled hidden></option>
                   {BAF_FLIGHTS.map((f) => (
-                    <option key={`signup-f-${f}`} value={f}>
+                    <option key={`reg-f-${f}`} value={f} className="bg-[#0b1424] text-slate-100">
                       {f}
                     </option>
                   ))}
                 </select>
-              </div>
-            </div>
-
-            <div>
-              <label
-                htmlFor="signup-pin"
-                className="block text-[10px] font-bold tracking-wider uppercase text-slate-400 mb-1"
-              >
-                Login PIN <span className="text-slate-500 normal-case font-normal">(Optional)</span>
-              </label>
-              <div className="relative">
-                <input
-                  id="signup-pin"
-                  type={showSignUpPin ? 'text' : 'password'}
-                  inputMode="numeric"
-                  maxLength={12}
-                  value={signUpPin}
-                  onChange={(e) => setSignUpPin(e.target.value.replace(/\s/g, '').slice(0, 12))}
-                  placeholder="Leave blank if no PIN needed"
-                  className="w-full bg-[#08101e] border border-slate-700/80 focus:border-emerald-500 rounded-xl pl-3.5 pr-10 py-2.5 text-xs font-semibold text-white tracking-wider tabular-nums outline-none transition-colors"
-                />
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => setShowSignUpPin((p) => !p)}
-                  aria-label={showSignUpPin ? 'Hide PIN' : 'Show PIN'}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
-                >
-                  {showSignUpPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
               </div>
             </div>
 
@@ -656,13 +789,13 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
               className="w-full py-3 px-4 rounded-xl bg-[#00c853] hover:bg-[#00e05d] text-slate-950 font-bold text-xs sm:text-sm tracking-wider uppercase flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-950/50 mt-1"
             >
               <UserPlus className="w-4 h-4" />
-              <span>SIGN UP</span>
+              <span>REGISTER</span>
             </button>
 
             <button
               type="button"
               onClick={() => {
-                setSignUpError(null);
+                setRegisterError(null);
                 setMode('login');
               }}
               className="w-full py-2.5 px-4 rounded-xl bg-[#08101e] hover:bg-[#111e35] border border-slate-700/80 text-slate-300 hover:text-white text-xs font-semibold tracking-wide flex items-center justify-center gap-2 transition-colors cursor-pointer"

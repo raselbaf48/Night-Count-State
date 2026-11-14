@@ -300,7 +300,7 @@ export function loadThemePreference(): ThemePreference {
   } catch {
     // ignore storage errors
   }
-  return 'dark';
+  return 'system';
 }
 
 export function saveThemePreference(pref: ThemePreference): ThemePreference {
