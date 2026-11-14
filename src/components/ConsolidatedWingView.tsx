@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DayState, UnitRowState } from '../types/nightCount';
+import { DayState, UnitRowState, WingConfig } from '../types/nightCount';
 import {
   calculateUnitSummarizedRow,
   getUnitAirmen,
@@ -7,16 +7,20 @@ import {
   loadHiddenQuickEditDisposals,
   saveHiddenQuickEditDisposals,
 } from '../utils/storage';
-import { DISPOSAL_OPTIONS } from '../data/initialData';
+import { createBlankUnitRow, DISPOSAL_OPTIONS } from '../data/initialData';
 import { Edit3, Check, X, Shield, ArrowLeft, Eye, EyeOff, Plus } from 'lucide-react';
 
 interface ConsolidatedWingViewProps {
   dayState: DayState;
+  activeWing?: WingConfig;
   onUpdateSquadronRow: (updatedRow: UnitRowState) => void;
   onSelectUnit: (unitName: string) => void;
   onAddCustomDisposal: (customName: string) => void;
   onDeleteCustomDisposal: (customName: string) => void;
   onSettingsChanged?: () => void;
+  onRequireAuth?: (onSuccess: () => void) => void;
+  onEditingChange?: (isEditing: boolean) => void;
+  canQuickEdit?: boolean;
 }
 
 const STANDARD_DISPOSAL_ITEMS = DISPOSAL_OPTIONS.filter((o) => o.value !== '-');
@@ -24,11 +28,15 @@ const ALWAYS_VISIBLE_DISPOSALS = new Set(['TDY', 'Leave', 'GD', 'Office Duty']);
 
 export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   dayState,
+  activeWing,
   onUpdateSquadronRow,
   onSelectUnit,
   onAddCustomDisposal,
   onDeleteCustomDisposal,
   onSettingsChanged,
+  onRequireAuth,
+  onEditingChange,
+  canQuickEdit = true,
 }) => {
   const [editingSqn, setEditingSqn] = useState<string | null>(null);
   const [editTotalStr, setEditTotalStr] = useState<number>(0);
@@ -45,13 +53,27 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
       );
     }
   }, [dayState, editingSqn]);
+
+  useEffect(() => {
+    onEditingChange?.(Boolean(editingSqn && editingSourceRow));
+    return () => {
+      onEditingChange?.(false);
+    };
+  }, [editingSqn, editingSourceRow, onEditingChange]);
   const [showHiddenDrawer, setShowHiddenDrawer] = useState<boolean>(false);
   const [isAddingCustom, setIsAddingCustom] = useState<boolean>(false);
   const [newCustomName, setNewCustomName] = useState<string>('');
   const [newCustomAmount, setNewCustomAmount] = useState<number>(0);
 
   const summarized155 = calculateUnitSummarizedRow(dayState, '155 UASU BAF');
-  const units = dayState.consolidatedUnits;
+  const rowByUnit = new Map(
+    dayState.consolidatedUnits.map((u) => [u.sqnUnit.toLowerCase(), u])
+  );
+  const units: UnitRowState[] = activeWing
+    ? activeWing.units.map(
+        (unitName) => rowByUnit.get(unitName.toLowerCase()) || createBlankUnitRow(unitName)
+      )
+    : dayState.consolidatedUnits;
 
   const savedCustomNames = Array.from(
     new Set([
@@ -409,6 +431,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
       rmks: editRemarks.trim(),
       disposalCounts: { ...editCounts },
       customDisposals,
+      manuallyEdited: true,
     });
 
     setEditingSqn(null);
@@ -471,7 +494,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     );
 
     return (
-      <div className="w-full max-w-2xl mx-auto px-4 pb-12 text-[12px]">
+      <div className="w-full max-w-2xl mx-auto px-4 pt-5 sm:pt-8 pb-12 text-[12px]">
         <form
           onSubmit={saveEdit}
           className="bg-[#0b1424] border border-[#1b2a44] rounded-2xl shadow-2xl overflow-hidden"
@@ -803,7 +826,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
             CONSOLIDATED NIGHT COUNT STATE : BAF AIRMEN
           </h2>
           <h3 className="text-sm sm:text-base font-bold tracking-wider text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mt-0.5">
-            FLG WG
+            {activeWing?.shortName || 'FLG WG'}
           </h3>
         </div>
 
@@ -874,9 +897,13 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                           >
                             Details
                           </button>
-                          {getUnitAirmen(dayState, row.sqnUnit).length === 0 && !is155 && (
+                          {canQuickEdit && getUnitAirmen(dayState, row.sqnUnit).length === 0 && !is155 && (
                             <button
-                              onClick={() => startEdit(row)}
+                              onClick={() =>
+                                onRequireAuth
+                                  ? onRequireAuth(() => startEdit(row))
+                                  : startEdit(row)
+                              }
                               className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
                               title="Quick edit squadron count"
                             >

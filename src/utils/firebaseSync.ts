@@ -6,8 +6,9 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db, ensureAnonymousAuth, handleFirestoreError, OperationType } from '../firebase';
-import { DayState, PreparedByInfo } from '../types/nightCount';
+import { DayState, LoginHistoryEntry, PreparedByInfo, RolePermissionsConfig, WingConfig } from '../types/nightCount';
 import { INITIAL_PREPARED_BY } from '../data/initialData';
+import { sanitizeRolePermissionsConfig, sanitizeWingsConfig } from './storage';
 
 const DAYS_COLLECTION = 'night_count_days';
 const META_COLLECTION = 'night_count_meta';
@@ -18,6 +19,11 @@ export interface CloudSettings {
   preparedBy: PreparedByInfo;
   savedCustomDisposals: string[];
   hiddenQuickEditDisposals: string[];
+  recentUserIds?: string[];
+  loginHistory?: LoginHistoryEntry[];
+  appNotice?: string;
+  wings?: WingConfig[];
+  rolePermissions?: RolePermissionsConfig;
 }
 
 export interface CloudBootResult {
@@ -88,8 +94,37 @@ export function computeDayFingerprint(state: DayState): string {
     customRemarks: state.customRemarks || '',
     unitRemarks: state.unitRemarks || {},
     savedCustomDisposals: state.savedCustomDisposals || [],
+    updateLogs: state.updateLogs || [],
   };
   return JSON.stringify(stripUndefined(normalized));
+}
+
+function sanitizeLoginHistory(arr: unknown): LoginHistoryEntry[] {
+  if (!Array.isArray(arr)) return [];
+  const validModes = new Set(['Portal', 'Auth Box', 'Guest']);
+  const result: LoginHistoryEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of arr) {
+    if (!item || typeof item !== 'object') continue;
+    const raw = item as Partial<LoginHistoryEntry>;
+    const id = clampStr(raw.id, 80).trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const mode = validModes.has(String(raw.mode)) ? (raw.mode as LoginHistoryEntry['mode']) : 'Portal';
+    result.push({
+      id,
+      bdNo: clampStr(raw.bdNo, 20),
+      rank: clampStr(raw.rank, 40),
+      name: clampStr(raw.name, 100),
+      trade: clampStr(raw.trade, 80),
+      flight: clampStr(raw.flight, 80),
+      mode,
+      timestamp: clampStr(raw.timestamp, 50),
+      displayTime: clampStr(raw.displayTime, 60),
+    });
+    if (result.length >= 50) break;
+  }
+  return result;
 }
 
 export function computeSettingsFingerprint(settings: CloudSettings): string {
@@ -97,7 +132,30 @@ export function computeSettingsFingerprint(settings: CloudSettings): string {
     preparedBy: sanitizePreparedBy(settings.preparedBy),
     savedCustomDisposals: sanitizeStringArray(settings.savedCustomDisposals, 200, 100),
     hiddenQuickEditDisposals: sanitizeStringArray(settings.hiddenQuickEditDisposals, 200, 100),
+    recentUserIds: sanitizeStringArray(settings.recentUserIds, 3, 20),
+    loginHistory: sanitizeLoginHistory(settings.loginHistory),
+    appNotice: clampStr(settings.appNotice ?? '', 500),
+    wings: sanitizeWingsConfig(settings.wings),
+    rolePermissions: sanitizeRolePermissionsConfig(settings.rolePermissions),
   });
+}
+
+function isOfflineOrUnavailableError(err: unknown): boolean {
+  const code =
+    err && typeof err === 'object' && 'code' in err
+      ? String((err as { code?: unknown }).code || '').toLowerCase()
+      : '';
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err || '').toLowerCase();
+  return (
+    code === 'unavailable' ||
+    code === 'deadline-exceeded' ||
+    code === 'aborted' ||
+    msg.includes('failed to get document from server') ||
+    msg.includes('client is offline') ||
+    msg.includes('offline') ||
+    msg.includes('unavailable') ||
+    msg.includes('network')
+  );
 }
 
 async function getDocPreferServer(pathCollection: string, docId: string) {
@@ -105,9 +163,15 @@ async function getDocPreferServer(pathCollection: string, docId: string) {
   try {
     return await getDocFromServer(ref);
   } catch (err) {
-    const msg = err instanceof Error ? err.message.toLowerCase() : '';
-    if (msg.includes('offline') || msg.includes('unavailable') || msg.includes('network')) {
-      return await getDoc(ref);
+    if (isOfflineOrUnavailableError(err)) {
+      try {
+        return await getDoc(ref);
+      } catch (cacheErr) {
+        if (isOfflineOrUnavailableError(cacheErr)) {
+          return null;
+        }
+        throw cacheErr;
+      }
     }
     throw err;
   }
@@ -118,7 +182,7 @@ export async function downloadDayFromCloud(dateIso: string): Promise<DayState | 
   const path = `${DAYS_COLLECTION}/${dateIso}`;
   try {
     const snap = await getDocPreferServer(DAYS_COLLECTION, dateIso);
-    if (!snap.exists()) return null;
+    if (!snap || !snap.exists()) return null;
     const data = snap.data();
     return {
       date: data.date,
@@ -131,11 +195,11 @@ export async function downloadDayFromCloud(dateIso: string): Promise<DayState | 
       customRemarks: typeof data.customRemarks === 'string' ? data.customRemarks : '',
       unitRemarks: data.unitRemarks && typeof data.unitRemarks === 'object' ? data.unitRemarks : {},
       savedCustomDisposals: Array.isArray(data.savedCustomDisposals) ? data.savedCustomDisposals : [],
+      updateLogs: Array.isArray(data.updateLogs) ? data.updateLogs : [],
       rosterVersion: typeof data.rosterVersion === 'number' ? data.rosterVersion : 7,
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message.toLowerCase() : '';
-    if (msg.includes('offline') || msg.includes('unavailable')) {
+    if (isOfflineOrUnavailableError(err)) {
       return null;
     }
     handleFirestoreError(err, OperationType.GET, path);
@@ -155,16 +219,24 @@ export async function downloadFromCloudOnEnter(dateIso: string): Promise<CloudBo
       getDocPreferServer(DAYS_COLLECTION, dateIso),
     ]);
 
-    if (settingsSnap.exists()) {
+    if (settingsSnap && settingsSnap.exists()) {
       const s = settingsSnap.data();
       settings = {
         preparedBy: sanitizePreparedBy(s.preparedBy),
         savedCustomDisposals: sanitizeStringArray(s.savedCustomDisposals, 200, 100),
         hiddenQuickEditDisposals: sanitizeStringArray(s.hiddenQuickEditDisposals, 200, 100),
+        recentUserIds: sanitizeStringArray(s.recentUserIds, 3, 20),
+        loginHistory: sanitizeLoginHistory(s.loginHistory),
+        appNotice: clampStr(s.appNotice ?? '', 500),
+        wings: Array.isArray(s.wings) ? sanitizeWingsConfig(s.wings) : undefined,
+        rolePermissions:
+          s.rolePermissions && typeof s.rolePermissions === 'object'
+            ? sanitizeRolePermissionsConfig(s.rolePermissions)
+            : undefined,
       };
     }
 
-    if (indexSnap.exists()) {
+    if (indexSnap && indexSnap.exists()) {
       const idxData = indexSnap.data();
       if (Array.isArray(idxData.dates)) {
         cloudDates = idxData.dates
@@ -173,7 +245,7 @@ export async function downloadFromCloudOnEnter(dateIso: string): Promise<CloudBo
       }
     }
 
-    if (daySnap.exists()) {
+    if (daySnap && daySnap.exists()) {
       const data = daySnap.data();
       dayState = {
         date: data.date,
@@ -186,9 +258,12 @@ export async function downloadFromCloudOnEnter(dateIso: string): Promise<CloudBo
         customRemarks: typeof data.customRemarks === 'string' ? data.customRemarks : '',
         unitRemarks: data.unitRemarks && typeof data.unitRemarks === 'object' ? data.unitRemarks : {},
         savedCustomDisposals: Array.isArray(data.savedCustomDisposals) ? data.savedCustomDisposals : [],
+        updateLogs: Array.isArray(data.updateLogs) ? data.updateLogs : [],
         rosterVersion: typeof data.rosterVersion === 'number' ? data.rosterVersion : 7,
       };
-    } else if (cloudDates.length > 0) {
+    }
+
+    if (cloudDates.length > 0) {
       const priorDates = cloudDates.filter((d) => d < dateIso);
       if (priorDates.length > 0) {
         const latestPrior = priorDates[priorDates.length - 1];
@@ -196,8 +271,7 @@ export async function downloadFromCloudOnEnter(dateIso: string): Promise<CloudBo
       }
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message.toLowerCase() : '';
-    if (msg.includes('offline') || msg.includes('unavailable')) {
+    if (isOfflineOrUnavailableError(err)) {
       return { dayState: null, priorCloudDayState: null, settings: null, cloudDates: [] };
     }
     handleFirestoreError(err, OperationType.GET, `${DAYS_COLLECTION}/${dateIso}`);
@@ -227,11 +301,15 @@ export async function uploadDayToCloud(dayState: DayState): Promise<void> {
     customRemarks: clampStr(dayState.customRemarks || '', 2000),
     unitRemarks: dayState.unitRemarks || {},
     savedCustomDisposals: sanitizeStringArray(dayState.savedCustomDisposals, 200, 100),
+    updateLogs: (dayState.updateLogs || []).slice(0, 500),
     rosterVersion: 7,
   });
 
   try {
     const existingSnap = await getDocPreferServer(DAYS_COLLECTION, dayState.date);
+    if (!existingSnap) {
+      throw new Error('CLOUD_UNAVAILABLE');
+    }
     if (existingSnap.exists()) {
       const existingData = existingSnap.data();
       await setDoc(dayRef, {
@@ -251,6 +329,12 @@ export async function uploadDayToCloud(dayState: DayState): Promise<void> {
       });
     }
   } catch (err) {
+    if (err instanceof Error && err.message === 'CLOUD_UNAVAILABLE') {
+      throw err;
+    }
+    if (isOfflineOrUnavailableError(err)) {
+      throw new Error('CLOUD_UNAVAILABLE');
+    }
     handleFirestoreError(err, OperationType.WRITE, dayPath);
   }
 
@@ -259,6 +343,9 @@ export async function uploadDayToCloud(dayState: DayState): Promise<void> {
   const indexRef = doc(db, META_COLLECTION, INDEX_DOC_ID);
   try {
     const indexSnap = await getDocPreferServer(META_COLLECTION, INDEX_DOC_ID);
+    if (!indexSnap) {
+      return;
+    }
     if (indexSnap.exists()) {
       const existingData = indexSnap.data();
       const existingDates: string[] = Array.isArray(existingData.dates) ? existingData.dates : [];
@@ -282,6 +369,9 @@ export async function uploadDayToCloud(dayState: DayState): Promise<void> {
       });
     }
   } catch (err) {
+    if (isOfflineOrUnavailableError(err)) {
+      return;
+    }
     handleFirestoreError(err, OperationType.WRITE, indexPath);
   }
 }
@@ -294,14 +384,22 @@ export async function uploadSettingsToCloud(settings: CloudSettings): Promise<vo
 
   const settingsPath = `${META_COLLECTION}/${SETTINGS_DOC_ID}`;
   const settingsRef = doc(db, META_COLLECTION, SETTINGS_DOC_ID);
-  const payload = {
+  const payload = stripUndefined({
     preparedBy: sanitizePreparedBy(settings.preparedBy),
     savedCustomDisposals: sanitizeStringArray(settings.savedCustomDisposals, 200, 100),
     hiddenQuickEditDisposals: sanitizeStringArray(settings.hiddenQuickEditDisposals, 200, 100),
-  };
+    recentUserIds: sanitizeStringArray(settings.recentUserIds, 3, 20),
+    loginHistory: sanitizeLoginHistory(settings.loginHistory),
+    appNotice: clampStr(settings.appNotice ?? '', 500),
+    wings: sanitizeWingsConfig(settings.wings),
+    rolePermissions: sanitizeRolePermissionsConfig(settings.rolePermissions),
+  });
 
   try {
     const existingSnap = await getDocPreferServer(META_COLLECTION, SETTINGS_DOC_ID);
+    if (!existingSnap) {
+      throw new Error('CLOUD_UNAVAILABLE');
+    }
     if (existingSnap.exists()) {
       const existingData = existingSnap.data();
       await setDoc(settingsRef, {
@@ -321,6 +419,12 @@ export async function uploadSettingsToCloud(settings: CloudSettings): Promise<vo
       });
     }
   } catch (err) {
+    if (err instanceof Error && err.message === 'CLOUD_UNAVAILABLE') {
+      throw err;
+    }
+    if (isOfflineOrUnavailableError(err)) {
+      throw new Error('CLOUD_UNAVAILABLE');
+    }
     handleFirestoreError(err, OperationType.WRITE, settingsPath);
   }
 }

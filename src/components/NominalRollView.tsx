@@ -39,6 +39,10 @@ interface NominalRollViewProps {
   onAddAirmenBulk: (airmen: Omit<Airman, 'id'>[]) => void;
   onDeleteAirman: (airmanId: string) => void;
   onDeleteCustomDisposal: (customName: string) => void;
+  onRequireAuth?: (onSuccess: () => void) => void;
+  canEditDisposals?: boolean;
+  canManageNominalRoll?: boolean;
+  canDeleteAirman?: boolean;
 }
 
 interface DisposalDropdownProps {
@@ -48,6 +52,7 @@ interface DisposalDropdownProps {
   onSelect: (val: string) => void;
   onOpenCustomModal: () => void;
   onDeleteCustomDisposal: (customName: string) => void;
+  onBeforeOpen?: (proceed: () => void) => void;
 }
 
 const DisposalDropdown: React.FC<DisposalDropdownProps> = ({
@@ -57,6 +62,7 @@ const DisposalDropdown: React.FC<DisposalDropdownProps> = ({
   onSelect,
   onOpenCustomModal,
   onDeleteCustomDisposal,
+  onBeforeOpen,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [dispSearch, setDispSearch] = useState('');
@@ -141,11 +147,20 @@ const DisposalDropdown: React.FC<DisposalDropdownProps> = ({
         ref={triggerRef}
         type="button"
         onClick={() => {
-          if (!isOpen) {
+          if (isOpen) {
+            setIsOpen(false);
+            return;
+          }
+          const openMenu = () => {
             setDispSearch('');
             updatePosition();
+            setIsOpen(true);
+          };
+          if (onBeforeOpen) {
+            onBeforeOpen(openMenu);
+          } else {
+            openMenu();
           }
-          setIsOpen((prev) => !prev);
         }}
         className={`w-full flex items-center justify-between gap-2 py-1 px-2.5 rounded-lg text-xs cursor-pointer transition-all focus:outline-none ${
           hasDisposal
@@ -293,6 +308,10 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   onAddAirmenBulk,
   onDeleteAirman,
   onDeleteCustomDisposal,
+  onRequireAuth,
+  canEditDisposals = true,
+  canManageNominalRoll = true,
+  canDeleteAirman = true,
 }) => {
   const [selectedFlight, setSelectedFlight] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -434,19 +453,26 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
 
   // Open Add Airman modal with all fields completely blank
   const handleOpenAddModal = () => {
-    setAddMode('single');
-    setNewName('');
-    setNewRank('');
-    setNewTrade('');
-    setNewFlight('');
-    setNewBdNo('');
-    setIsCustomNewTrade(false);
-    setIsCustomNewFlight(false);
-    setAddError(null);
-    setBulkRows([]);
-    setBulkFileName('');
-    setBulkError(null);
-    setShowAddModal(true);
+    const openNow = () => {
+      setAddMode('single');
+      setNewName('');
+      setNewRank('');
+      setNewTrade('');
+      setNewFlight('');
+      setNewBdNo('');
+      setIsCustomNewTrade(false);
+      setIsCustomNewFlight(false);
+      setAddError(null);
+      setBulkRows([]);
+      setBulkFileName('');
+      setBulkError(null);
+      setShowAddModal(true);
+    };
+    if (onRequireAuth) {
+      onRequireAuth(openNow);
+    } else {
+      openNow();
+    }
   };
 
   // Handle Excel / CSV file selection for bulk upload
@@ -483,15 +509,23 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
 
   // Handle clicking a row to edit
   const handleRowClick = (airman: Airman) => {
-    setEditingAirman(airman);
-    setEditBdNo(airman.bdNo || '');
-    setEditRank(airman.rank);
-    setEditName(airman.name);
-    setEditTrade(airman.trade || '');
-    setEditFlight(airman.flight || 'Admin');
-    setIsCustomEditTrade(false);
-    setIsCustomEditFlight(false);
-    setEditError(null);
+    if (!canManageNominalRoll) return;
+    const openEditNow = () => {
+      setEditingAirman(airman);
+      setEditBdNo(airman.bdNo || '');
+      setEditRank(airman.rank);
+      setEditName(airman.name);
+      setEditTrade(airman.trade || '');
+      setEditFlight(airman.flight || 'Admin');
+      setIsCustomEditTrade(false);
+      setIsCustomEditFlight(false);
+      setEditError(null);
+    };
+    if (onRequireAuth) {
+      onRequireAuth(openEditNow);
+    } else {
+      openEditNow();
+    }
   };
 
   // Save edited airman
@@ -626,14 +660,16 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
               {filteredAirmen.length} of {airmen.length} Airmen
             </span>
 
-            <button
-              onClick={handleOpenAddModal}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg transition-all cursor-pointer shadow-sm hover:shadow"
-              title="Add New Airman to Nominal Roll"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Airman</span>
-            </button>
+            {canManageNominalRoll && (
+              <button
+                onClick={handleOpenAddModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg transition-all cursor-pointer shadow-sm hover:shadow"
+                title="Add New Airman to Nominal Roll"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Airman</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsCollapsed(!isCollapsed)}
@@ -766,17 +802,30 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                             className="py-2.5 px-4"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <DisposalDropdown
-                              value={currentDispVal}
-                              hasDisposal={hasDisposal}
-                              savedCustomDisposals={activeCustomDisposals}
-                              onSelect={(val) => onUpdateAirmanDisposal(airman.id, val)}
-                              onOpenCustomModal={() => {
-                                setCustomModalAirman(airman);
-                                setCustomDisposalInput('');
-                              }}
-                              onDeleteCustomDisposal={onDeleteCustomDisposal}
-                            />
+                            {canEditDisposals ? (
+                              <DisposalDropdown
+                                value={currentDispVal}
+                                hasDisposal={hasDisposal}
+                                savedCustomDisposals={activeCustomDisposals}
+                                onSelect={(val) => onUpdateAirmanDisposal(airman.id, val)}
+                                onOpenCustomModal={() => {
+                                  setCustomModalAirman(airman);
+                                  setCustomDisposalInput('');
+                                }}
+                                onDeleteCustomDisposal={onDeleteCustomDisposal}
+                                onBeforeOpen={onRequireAuth}
+                              />
+                            ) : (
+                              <span
+                                className={`inline-block py-1 px-2.5 rounded-lg text-xs ${
+                                  hasDisposal
+                                    ? 'bg-amber-500/10 text-amber-300 font-semibold border border-amber-500/30'
+                                    : 'text-slate-400'
+                                }`}
+                              >
+                                {currentDispVal}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -976,18 +1025,24 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
               </div>
 
               <div className="pt-4 flex items-center justify-between border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onDeleteAirman(editingAirman.id);
-                    setEditingAirman(null);
-                  }}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 text-rose-400 hover:text-white bg-rose-950/40 hover:bg-rose-900/80 rounded border border-rose-800/80 transition-colors cursor-pointer font-medium"
-                  title="Delete this airman permanently"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Delete Airman</span>
-                </button>
+                {canDeleteAirman ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDeleteAirman(editingAirman.id);
+                      setEditingAirman(null);
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 text-rose-400 hover:text-white bg-rose-950/40 hover:bg-rose-900/80 rounded border border-rose-800/80 transition-colors cursor-pointer font-medium"
+                    title="Delete this airman permanently"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Airman</span>
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-slate-500">
+                    Delete disabled by Owner policy
+                  </span>
+                )}
 
                 <div className="flex items-center gap-2">
                   <button

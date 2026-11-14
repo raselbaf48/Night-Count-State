@@ -21,6 +21,77 @@ body {
   overscroll-behavior-y: contain;
 }
 
+/* Light Mode Theme Overrides */
+html[data-theme="light"],
+html[data-theme="light"] body {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+html[data-theme="light"] .bg-\[\#070d18\],
+html[data-theme="light"] .bg-\[\#060c17\],
+html[data-theme="light"] .bg-\[\#060c18\],
+html[data-theme="light"] .bg-\[\#070e1b\],
+html[data-theme="light"] .bg-\[\#060d1b\],
+html[data-theme="light"] .bg-\[\#08101e\]\/95,
+html[data-theme="light"] .bg-\[\#08101e\] {
+  background-color: #f8fafc !important;
+}
+
+html[data-theme="light"] .bg-\[\#0b1424\],
+html[data-theme="light"] .bg-\[\#0b1526\],
+html[data-theme="light"] .bg-\[\#09111f\],
+html[data-theme="light"] .bg-\[\#091223\],
+html[data-theme="light"] .bg-\[\#0d1728\],
+html[data-theme="light"] .bg-\[\#0e192d\],
+html[data-theme="light"] .bg-\[\#0e192d\]\/50,
+html[data-theme="light"] .bg-\[\#101c31\] {
+  background-color: #ffffff !important;
+}
+
+html[data-theme="light"] .bg-\[\#0f1b2f\],
+html[data-theme="light"] .bg-\[\#0e1b2f\],
+html[data-theme="light"] .bg-\[\#0e1b30\],
+html[data-theme="light"] .bg-\[\#121f36\],
+html[data-theme="light"] .bg-\[\#14233d\],
+html[data-theme="light"] .bg-\[\#16233b\],
+html[data-theme="light"] .bg-\[\#1a2742\] {
+  background-color: #e2e8f0 !important;
+}
+
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .text-slate-100,
+html[data-theme="light"] .text-slate-200 {
+  color: #0f172a !important;
+}
+
+html[data-theme="light"] .text-slate-300,
+html[data-theme="light"] .text-slate-400 {
+  color: #475569 !important;
+}
+
+html[data-theme="light"] .border-\[\#1b2a44\],
+html[data-theme="light"] .border-\[\#1d2e4c\],
+html[data-theme="light"] .border-\[\#1f2f4d\],
+html[data-theme="light"] .border-\[\#1e3150\],
+html[data-theme="light"] .border-\[\#16233b\],
+html[data-theme="light"] .border-\[\#1a2944\],
+html[data-theme="light"] .border-\[\#142036\],
+html[data-theme="light"] .border-slate-700,
+html[data-theme="light"] .border-slate-700\/80,
+html[data-theme="light"] .border-slate-800,
+html[data-theme="light"] .border-slate-800\/80 {
+  border-color: #cbd5e1 !important;
+}
+
+html[data-theme="light"] aside.sidebar-emerald .text-white,
+html[data-theme="light"] .bg-emerald-600.text-white,
+html[data-theme="light"] .bg-blue-600.text-white,
+html[data-theme="light"] .bg-gradient-to-r.from-blue-600 .text-white,
+html[data-theme="light"] .bg-rose-600.text-white {
+  color: #ffffff !important;
+}
+
 @layer utilities {
   /* Vertical text styling for military consolidated state table headers */
   .writing-vertical {

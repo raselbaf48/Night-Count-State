@@ -49,6 +49,10 @@
           "type": "array",
           "description": "Saved custom disposal names"
         },
+        "updateLogs": {
+          "type": "array",
+          "description": "Audit log of state updates for this date with operator identity"
+        },
         "rosterVersion": {
           "type": "integer",
           "description": "Schema migration version"
@@ -103,6 +107,27 @@
         "hiddenQuickEditDisposals": {
           "type": "array",
           "description": "Global list of hidden quick-edit disposal columns"
+        },
+        "recentUserIds": {
+          "type": "array",
+          "description": "Last 3 logged-in USER IDs (BD No) for Quick Access"
+        },
+        "loginHistory": {
+          "type": "array",
+          "description": "Recent operator login history entries (up to 50)"
+        },
+        "appNotice": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Shared operational notice for Night Count State"
+        },
+        "wings": {
+          "type": "array",
+          "description": "Configured Wings and their assigned Squadrons/Units (up to 30)"
+        },
+        "rolePermissions": {
+          "type": "object",
+          "description": "Role-based access limitation switches for SUPER_ADMIN, USER, and GUEST"
         },
         "createdAt": {
           "type": "string",

@@ -20,7 +20,7 @@ export const INITIAL_AIRMEN_155: Airman[] = [
   { id: 'airman-7', bdNo: '471112', rank: 'Cpl', name: 'Maraz', trade: 'Sec Asst (GD)', flight: 'Admin', unit: '155 UASU BAF', status: 'on_parade' },
   { id: 'airman-8', bdNo: '472432', rank: 'Cpl', name: 'Shariful', trade: 'Log Asst', flight: 'Admin', unit: '155 UASU BAF', status: 'on_parade' },
   { id: 'airman-9', bdNo: '473856', rank: 'Cpl', name: 'Akash', trade: 'IT Asst', flight: 'GCS', unit: '155 UASU BAF', status: 'on_parade' },
-  { id: 'airman-10', bdNo: '474455', rank: 'LAC', name: 'Rasel', trade: 'E&I Fitt', flight: 'Avionics', unit: '155 UASU BAF', status: 'duty', currentDuty: 'Office Duty' },
+  { id: 'airman-10', bdNo: '474455', rank: 'LAC', name: 'Rasel', trade: 'E&I Fitt', flight: 'Avionics', unit: '155 UASU BAF', role: 'OWNER', status: 'duty', currentDuty: 'Office Duty' },
   { id: 'airman-11', bdNo: '474513', rank: 'LAC', name: 'Mahedi', trade: 'Armt Fitt', flight: 'Mechanics', unit: '155 UASU BAF', status: 'on_parade' },
   { id: 'airman-12', bdNo: '474549', rank: 'LAC', name: 'Rakib', trade: 'Radio Fitt', flight: 'Avionics', unit: '155 UASU BAF', status: 'on_parade' },
   { id: 'airman-13', bdNo: '474608', rank: 'LAC', name: 'Joy', trade: 'Radio Fitt', flight: 'GCS', unit: '155 UASU BAF', status: 'on_parade' },
@@ -184,11 +184,11 @@ export const DISPOSAL_OPTIONS = [
   { value: 'Qmt', label: 'Qmt', category: 'cmh' },
   { value: 'U/C', label: 'U/C', category: 'ucUBoard' },
   { value: 'U/Board', label: 'U/Board', category: 'ucUBoard' },
+  { value: 'GD', label: 'GD', category: 'baseSecurityGd' },
   { value: 'Office Duty', label: 'Office Duty', category: 'officeDuty' },
   { value: 'Aft flg', label: 'Aft flg', category: 'niDuty' },
   { value: 'Ni flg', label: 'Ni flg', category: 'niDuty' },
   { value: 'Ni Duty', label: 'Ni Duty', category: 'niDuty' },
-  { value: 'GD', label: 'GD', category: 'baseSecurityGd' },
   { value: 'BTF', label: 'BTF', category: 'baseSecurityGd' },
   { value: 'NTF', label: 'NTF', category: 'baseSecurityGd' },
   { value: 'Airfield', label: 'Airfield', category: 'baseSecurityGd' },
@@ -236,6 +236,19 @@ export const BAF_TRADES = [
 
 // Ranks for Add Airmen (Cpl, LAC, AC)
 export const BAF_RANKS_SELECT: Rank[] = ['Cpl', 'LAC', 'AC', 'AC-1', 'AC-2'];
+
+// All BAF airmen ranks for Operator Login & Auth
+export const BAF_ALL_RANKS: Rank[] = [
+  'MWO',
+  'WO',
+  'Flt Sgt',
+  'Sgt',
+  'Cpl',
+  'LAC',
+  'AC-1',
+  'AC-2',
+  'AC',
+];
 
 // Flights for 155 UASU BAF
 export const BAF_FLIGHTS = ['Mechanics', 'Avionics', 'GCS', 'Admin'];

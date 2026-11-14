@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { DayState, Airman } from '../types/nightCount';
 import {
   calculateUnitSummarizedRow,
@@ -14,13 +14,23 @@ interface UnitStateViewProps {
   onToggleAirmanParade?: (airmanId: string) => void;
   onSelectAirmanForDisposal?: (airman: Airman) => void;
   onUpdateRemarks: (remarks: string) => void;
+  onCommitRemarks?: (remarks: string) => void;
+  onRequireAuth?: (onSuccess: () => void) => void;
+  isOperatorVerified?: boolean;
+  canEditRemarks?: boolean;
 }
 
 export const UnitStateView: React.FC<UnitStateViewProps> = ({
   unitName = '155 UASU BAF',
   dayState,
   onUpdateRemarks,
+  onCommitRemarks,
+  onRequireAuth,
+  isOperatorVerified = false,
+  canEditRemarks = true,
 }) => {
+  const remarksInputRef = useRef<HTMLInputElement>(null);
+  const initialRemarksRef = useRef<string>('');
   const summarized = calculateUnitSummarizedRow(dayState, unitName);
   const currentRemarks = getUnitRemarks(dayState, unitName);
 
@@ -189,10 +199,38 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
                       {currentRemarks || 'Nil'}
                     </span>
                     <input
+                      ref={remarksInputRef}
                       type="text"
                       value={currentRemarks}
+                      readOnly={!canEditRemarks}
                       placeholder="Nil"
-                      onChange={(e) => onUpdateRemarks(e.target.value)}
+                      onFocus={() => {
+                        if (!canEditRemarks) {
+                          remarksInputRef.current?.blur();
+                          return;
+                        }
+                        initialRemarksRef.current = currentRemarks;
+                        if (!isOperatorVerified && onRequireAuth) {
+                          remarksInputRef.current?.blur();
+                          onRequireAuth(() => {
+                            setTimeout(() => {
+                              remarksInputRef.current?.focus();
+                            }, 50);
+                          });
+                          return;
+                        }
+                      }}
+                      onChange={(e) => canEditRemarks && onUpdateRemarks(e.target.value)}
+                      onBlur={(e) => {
+                        if (
+                          canEditRemarks &&
+                          isOperatorVerified &&
+                          onCommitRemarks &&
+                          e.target.value !== initialRemarksRef.current
+                        ) {
+                          onCommitRemarks(e.target.value);
+                        }
+                      }}
                       className="col-start-1 row-start-1 w-full min-w-[24px] bg-transparent px-1 py-0.5 text-center text-[12px] text-slate-300 placeholder:text-slate-600 focus:outline-none focus:bg-slate-800/60 rounded"
                     />
                   </div>

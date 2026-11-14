@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Printer, FileText } from 'lucide-react';
-import { DayState } from '../types/nightCount';
+import { DayState, WingConfig } from '../types/nightCount';
 import {
   calculateUnitSummarizedRow,
   categorizeUnitDisposals,
@@ -15,6 +15,7 @@ interface PrintReportModalProps {
   onClose: () => void;
   dayState: DayState;
   activeTab?: string;
+  activeWing?: WingConfig;
   unitSubTab?: 'state' | 'nominalRoll';
 }
 
@@ -23,13 +24,16 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   onClose,
   dayState,
   activeTab = '155 UASU BAF',
+  activeWing,
   unitSubTab = 'state',
 }) => {
   if (!isOpen) return null;
 
-  const isFlyingWing = activeTab === 'Flying Wing';
+  const isFlyingWing = activeWing ? activeTab === activeWing.name : activeTab === 'Flying Wing';
   const isNominalRoll = !isFlyingWing && unitSubTab === 'nominalRoll';
-  const unitName = isFlyingWing ? 'FLG WG' : activeTab;
+  const wingShortName = activeWing?.shortName || 'FLG WG';
+  const wingDisplayName = activeWing?.name || 'Flying Wing';
+  const unitName = isFlyingWing ? wingShortName : activeTab;
 
   const displayVal = (val: number | string) => {
     if (typeof val === 'number') {
@@ -39,7 +43,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   };
 
   // --- Mode 1: Flying Wing Consolidated Data ---
-  const wingSummary = getFlyingWingSummary(dayState);
+  const wingSummary = getFlyingWingSummary(dayState, activeWing?.units);
   const wingColumns = [
     { key: 'sqnUnit', label: 'Sqn/Unit' },
     { key: 'totalStr', label: 'Total Str' },
@@ -154,7 +158,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   };
 
   const modalTitle = isFlyingWing
-    ? 'Print Preview: Flying Wing (Consolidated)'
+    ? `Print Preview: ${wingDisplayName} (Consolidated)`
     : isNominalRoll
     ? `Print Preview: ${unitName} — Nominal Roll`
     : `Print Preview: ${unitName}`;
@@ -214,7 +218,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                     CONSOLIDATED NIGHT COUNT STATE : BAF AIRMEN
                   </h2>
                   <h3 className="text-sm sm:text-base font-bold tracking-wider text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mt-0.5">
-                    FLG WG
+                    {wingShortName}
                   </h3>
                 </div>
 

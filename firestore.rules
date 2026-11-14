@@ -74,6 +74,7 @@ service cloud.firestore {
           'customRemarks',
           'unitRemarks',
           'savedCustomDisposals',
+          'updateLogs',
           'rosterVersion',
           'createdAt',
           'createdBy',
@@ -104,6 +105,11 @@ service cloud.firestore {
           data.savedCustomDisposals.size() <= 200 &&
           (data.savedCustomDisposals.size() == 0 || (data.savedCustomDisposals[0] is string && data.savedCustomDisposals[0].size() <= 100))
         )) &&
+        (!('updateLogs' in data) || (
+          data.updateLogs is list &&
+          data.updateLogs.size() <= 500 &&
+          (data.updateLogs.size() == 0 || data.updateLogs[0] is map)
+        )) &&
         (!('rosterVersion' in data) || (data.rosterVersion is int && data.rosterVersion >= 1 && data.rosterVersion <= 100)) &&
         data.createdBy is string &&
         data.createdBy.size() >= 1 &&
@@ -127,6 +133,11 @@ service cloud.firestore {
           'preparedBy',
           'savedCustomDisposals',
           'hiddenQuickEditDisposals',
+          'recentUserIds',
+          'loginHistory',
+          'appNotice',
+          'wings',
+          'rolePermissions',
           'createdAt',
           'createdBy',
           'updatedAt',
@@ -139,6 +150,29 @@ service cloud.firestore {
         data.hiddenQuickEditDisposals is list &&
         data.hiddenQuickEditDisposals.size() <= 200 &&
         (data.hiddenQuickEditDisposals.size() == 0 || (data.hiddenQuickEditDisposals[0] is string && data.hiddenQuickEditDisposals[0].size() <= 100)) &&
+        (!('recentUserIds' in data) || (
+          data.recentUserIds is list &&
+          data.recentUserIds.size() <= 3 &&
+          (data.recentUserIds.size() == 0 || (data.recentUserIds[0] is string && data.recentUserIds[0].size() <= 20))
+        )) &&
+        (!('loginHistory' in data) || (
+          data.loginHistory is list &&
+          data.loginHistory.size() <= 50 &&
+          (data.loginHistory.size() == 0 || data.loginHistory[0] is map)
+        )) &&
+        (!('appNotice' in data) || (
+          data.appNotice is string &&
+          data.appNotice.size() <= 500
+        )) &&
+        (!('wings' in data) || (
+          data.wings is list &&
+          data.wings.size() <= 30 &&
+          (data.wings.size() == 0 || data.wings[0] is map)
+        )) &&
+        (!('rolePermissions' in data) || (
+          data.rolePermissions is map &&
+          data.rolePermissions.size() <= 10
+        )) &&
         data.createdBy is string &&
         data.createdBy.size() >= 1 &&
         data.createdBy.size() <= 128 &&
@@ -191,6 +225,7 @@ service cloud.firestore {
           'customRemarks',
           'unitRemarks',
           'savedCustomDisposals',
+          'updateLogs',
           'rosterVersion',
           'updatedAt',
           'updatedBy'
@@ -214,6 +249,11 @@ service cloud.firestore {
           'preparedBy',
           'savedCustomDisposals',
           'hiddenQuickEditDisposals',
+          'recentUserIds',
+          'loginHistory',
+          'appNotice',
+          'wings',
+          'rolePermissions',
           'updatedAt',
           'updatedBy'
         ]);

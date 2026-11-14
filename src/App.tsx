@@ -5,12 +5,32 @@
 
 import React, { useState, useEffect } from 'react';
 import { ControlsBar } from './components/ControlsBar';
+import { Sidebar } from './components/Sidebar';
+import { SettingsModal, SettingsTabId } from './components/SettingsModal';
 import { UnitStateView } from './components/UnitStateView';
 import { ConsolidatedWingView } from './components/ConsolidatedWingView';
 import { NominalRollView } from './components/NominalRollView';
 import { PreparedByModal } from './components/PreparedByModal';
 import { PrintReportModal } from './components/PrintReportModal';
-import { DayState, Airman, DisposalRecord, PreparedByInfo, UnitRowState } from './types/nightCount';
+import { OperatorAuthModal } from './components/OperatorAuthModal';
+import { StateUpdateLogView } from './components/StateUpdateLogView';
+import { LoginPortalView, SignUpPayload } from './components/LoginPortalView';
+import {
+  DayState,
+  Airman,
+  DisposalRecord,
+  PreparedByInfo,
+  UnitRowState,
+  OperatorProfile,
+  StateUpdateLogEntry,
+  LoginHistoryEntry,
+  WingConfig,
+  Rank,
+  UserRole,
+  RolePermissionKey,
+  RolePermissionsConfig,
+  ThemePreference,
+} from './types/nightCount';
 import {
   loadDayState,
   saveDayState,
@@ -27,9 +47,37 @@ import {
   loadHiddenQuickEditDisposals,
   saveHiddenQuickEditDisposals,
   normalizeDayState,
+  carryForwardPriorUnitRows,
   sortAirmenBySeniority,
   findExistingBdConflict,
   getAllExistingBdUnitMap,
+  loadVerifiedOperator,
+  saveVerifiedOperator,
+  clearVerifiedOperator,
+  loadGuestSession,
+  saveGuestSession,
+  clearGuestSession,
+  loadRecentUserIds,
+  saveRecentUserIdsList,
+  recordRecentUserId,
+  removeRecentUserId,
+  mergeRecentUserIds,
+  loadLoginHistory,
+  saveLoginHistoryList,
+  recordLoginHistoryEntry,
+  mergeLoginHistoryLists,
+  loadAppNotice,
+  saveAppNoticeStorage,
+  loadWingsConfig,
+  saveWingsConfig,
+  ensureDayStateHasConfiguredUnits,
+  createStateUpdateLog,
+  loadRolePermissions,
+  saveRolePermissions,
+  getUserRoleByBd,
+  hasRolePermission,
+  loadThemePreference,
+  saveThemePreference,
 } from './utils/storage';
 import {
   auth,
@@ -46,8 +94,8 @@ import {
   uploadSettingsToCloud,
   type CloudSettings,
 } from './utils/firebaseSync';
-import { DISPOSAL_OPTIONS } from './data/initialData';
-import { FileSpreadsheet, Users, UserCheck } from 'lucide-react';
+import { createBlankUnitRow, DISPOSAL_OPTIONS } from './data/initialData';
+import { FileSpreadsheet, Users, History, Megaphone, X, Lock } from 'lucide-react';
 import { OfflineIndicator } from './components/OfflineIndicator';
 
 const CLOUD_UPLOAD_DEBOUNCE_MS = 8000; // Always completes within 10 seconds of data change
@@ -56,12 +104,76 @@ export default function App() {
   const initialPrefs = React.useMemo(() => loadUiPrefs(), []);
   const [dateIso, setDateIso] = useState<string>(initialPrefs.dateIso);
   const [activeTab, setActiveTab] = useState<string>(initialPrefs.activeTab);
-  const [unitSubTab, setUnitSubTab] = useState<'state' | 'nominalRoll'>(initialPrefs.unitSubTab);
+  const [wingSubTab, setWingSubTab] = useState<'consolidated' | 'log'>('consolidated');
+  const [unitSubTab, setUnitSubTab] = useState<'state' | 'nominalRoll' | 'log'>(
+    initialPrefs.unitSubTab
+  );
   const [dayState, setDayState] = useState<DayState>(() => loadDayState(initialPrefs.dateIso));
 
   // Modals state
   const [isPreparedByOpen, setIsPreparedByOpen] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+
+  // Operator Authentication, Guest session, Sidebar & Settings state
+  const [verifiedOperator, setVerifiedOperator] = useState<OperatorProfile | null>(() =>
+    loadVerifiedOperator()
+  );
+  const [isGuestSession, setIsGuestSession] = useState<boolean>(() => loadGuestSession());
+  const [recentUserIds, setRecentUserIds] = useState<string[]>(() => loadRecentUserIds());
+  const [loginHistory, setLoginHistory] = useState<LoginHistoryEntry[]>(() => loadLoginHistory());
+  const [appNotice, setAppNotice] = useState<string>(() => loadAppNotice());
+  const [wings, setWings] = useState<WingConfig[]>(() => loadWingsConfig());
+  const [activeWingId, setActiveWingId] = useState<string>(() => loadWingsConfig()[0]?.id || 'flying-wing');
+  const [isNoticeDismissed, setIsNoticeDismissed] = useState(false);
+  const [themePref, setThemePref] = useState<ThemePreference>(() => loadThemePreference());
+  const [rolePermissions, setRolePermissions] = useState<RolePermissionsConfig>(() =>
+    loadRolePermissions()
+  );
+
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId>('theme');
+
+  const verifiedOperatorRef = React.useRef<OperatorProfile | null>(verifiedOperator);
+  const [isOperatorAuthOpen, setIsOperatorAuthOpen] = useState(false);
+  const pendingAuthActionRef = React.useRef<(() => void) | null>(null);
+
+  const requireOperatorAuth = React.useCallback((onSuccess: () => void) => {
+    if (verifiedOperatorRef.current) {
+      onSuccess();
+      return;
+    }
+    pendingAuthActionRef.current = onSuccess;
+    setIsOperatorAuthOpen(true);
+  }, []);
+
+  const openOperatorSwitcher = React.useCallback(() => {
+    pendingAuthActionRef.current = null;
+    setIsOperatorAuthOpen(true);
+  }, []);
+
+  const handleOperatorAuthCancel = React.useCallback(() => {
+    pendingAuthActionRef.current = null;
+    setIsOperatorAuthOpen(false);
+  }, []);
+
+  const [isQuickEditActive, setIsQuickEditActive] = useState(false);
+
+  const handleLogout = React.useCallback(() => {
+    clearVerifiedOperator();
+    clearGuestSession();
+    verifiedOperatorRef.current = null;
+    pendingAuthActionRef.current = null;
+    setVerifiedOperator(null);
+    setIsGuestSession(false);
+    setIsOperatorAuthOpen(false);
+    setIsPreparedByOpen(false);
+    setIsPrintOpen(false);
+    setIsSettingsOpen(false);
+    setIsMobileSidebarOpen(false);
+    setIsQuickEditActive(false);
+  }, []);
 
   // Cloud sync refs (ensures zero uploads unless data actually changed)
   const syncedDayHashesRef = React.useRef<Map<string, string>>(new Map());
@@ -113,7 +225,8 @@ export default function App() {
         dirtySettingsRef.current = null;
       }
     } catch (err) {
-      if (!(err instanceof Error && err.message === 'AUTH_REQUIRED')) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg !== 'AUTH_REQUIRED' && msg !== 'CLOUD_UNAVAILABLE') {
         console.error('Cloud upload deferred:', err);
       }
     } finally {
@@ -152,11 +265,26 @@ export default function App() {
   );
 
   const markSettingsChangedForCloud = React.useCallback(
-    (preparedBy: PreparedByInfo, savedCustomDisposals: string[]) => {
+    (
+      preparedBy: PreparedByInfo,
+      savedCustomDisposals: string[],
+      overrides?: {
+        recentUserIds?: string[];
+        loginHistory?: LoginHistoryEntry[];
+        appNotice?: string;
+        wings?: WingConfig[];
+        rolePermissions?: RolePermissionsConfig;
+      }
+    ) => {
       const candidate: CloudSettings = {
         preparedBy,
         savedCustomDisposals,
         hiddenQuickEditDisposals: loadHiddenQuickEditDisposals(),
+        recentUserIds: overrides?.recentUserIds ?? loadRecentUserIds(),
+        loginHistory: overrides?.loginHistory ?? loadLoginHistory(),
+        appNotice: overrides?.appNotice ?? loadAppNotice(),
+        wings: overrides?.wings ?? loadWingsConfig(),
+        rolePermissions: overrides?.rolePermissions ?? loadRolePermissions(),
       };
       const nextHash = computeSettingsFingerprint(candidate);
       if (syncedSettingsHashRef.current === nextHash) {
@@ -169,15 +297,182 @@ export default function App() {
     [scheduleCloudUpload]
   );
 
+  const handleGuestLogin = React.useCallback(() => {
+    saveGuestSession(true);
+    setIsGuestSession(true);
+    const nextHistory = recordLoginHistoryEntry(
+      { bdNo: 'GUEST', rank: '', name: 'Guest User', trade: '', flight: 'View Only' },
+      'Guest'
+    );
+    setLoginHistory(nextHistory);
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { loginHistory: nextHistory }
+    );
+    void flushCloudUploads();
+  }, [dayState.preparedBy, dayState.savedCustomDisposals, flushCloudUploads, markSettingsChangedForCloud]);
+
+  const handleOperatorVerified = React.useCallback(
+    (operator: OperatorProfile) => {
+      const loginMode: LoginHistoryEntry['mode'] = isOperatorAuthOpen ? 'Auth Box' : 'Portal';
+      saveVerifiedOperator(operator);
+      clearGuestSession();
+      setIsGuestSession(false);
+      verifiedOperatorRef.current = operator;
+      setVerifiedOperator(operator);
+      setIsOperatorAuthOpen(false);
+
+      const nextRecent = recordRecentUserId(operator.bdNo);
+      const nextHistory = recordLoginHistoryEntry(operator, loginMode);
+      setRecentUserIds(nextRecent);
+      setLoginHistory(nextHistory);
+      markSettingsChangedForCloud(
+        dayState.preparedBy,
+        dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+        { recentUserIds: nextRecent, loginHistory: nextHistory }
+      );
+      void flushCloudUploads();
+
+      const nextAction = pendingAuthActionRef.current;
+      pendingAuthActionRef.current = null;
+      if (nextAction) {
+        nextAction();
+      }
+    },
+    [dayState.preparedBy, dayState.savedCustomDisposals, flushCloudUploads, isOperatorAuthOpen, markSettingsChangedForCloud]
+  );
+
+  const handleSignUpFromPortal = React.useCallback(
+    (payload: SignUpPayload): { ok: boolean; error?: string } => {
+      const cleanName = payload.name.trim();
+      const cleanBd = payload.bdNo.replace(/\D/g, '').slice(0, 6);
+      const targetUnit = payload.unit.trim() || '155 UASU BAF';
+      const cleanPin = (payload.adminPin || '').trim();
+
+      if (!cleanName) {
+        return { ok: false, error: 'Please enter your name.' };
+      }
+      if (!/^\d{6}$/.test(cleanBd)) {
+        return { ok: false, error: 'USER ID (BD No) must be exactly 6 digits.' };
+      }
+
+      const conflict = findExistingBdConflict(dayState, cleanBd);
+      if (conflict) {
+        return {
+          ok: false,
+          error: `USER ID ${cleanBd} is already registered to ${conflict.airman.rank} ${conflict.airman.name} (${conflict.unit}). Please log in instead.`,
+        };
+      }
+
+      const operatorProfile: OperatorProfile = {
+        bdNo: cleanBd,
+        rank: payload.rank,
+        name: cleanName,
+        trade: payload.trade,
+        flight: payload.flight,
+      };
+
+      const newAirman: Airman = {
+        id: `airman-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        rank: payload.rank,
+        name: cleanName,
+        bdNo: cleanBd,
+        trade: payload.trade,
+        flight: payload.flight,
+        unit: targetUnit,
+        role: 'USER',
+        ...(cleanPin ? { adminPin: cleanPin } : {}),
+        status: 'on_parade',
+      };
+
+      if (findExistingBdConflict(dayState, cleanBd)) {
+        return { ok: false, error: `USER ID ${cleanBd} is already registered.` };
+      }
+
+      const currentList = getUnitAirmen(dayState, targetUnit);
+      const updatedList = sortAirmenBySeniority([...currentList, newAirman]);
+      const withAirman = setUnitAirmen(dayState, targetUnit, updatedList);
+      const syncedUnits = syncConsolidated155Row(withAirman.consolidatedUnits, withAirman);
+      const entry = createStateUpdateLog(
+        withAirman.date,
+        'Nominal Roll',
+        targetUnit,
+        `Signed up & added ${payload.rank} ${cleanName} (BD ${cleanBd}) to ${targetUnit} Nominal Roll & User Management`,
+        operatorProfile
+      );
+      const nextLogs = [...(withAirman.updateLogs || []), entry].slice(-500);
+      const fullySynced: DayState = {
+        ...withAirman,
+        consolidatedUnits: syncedUnits,
+        updateLogs: nextLogs,
+      };
+
+      userEditedDatesRef.current.add(fullySynced.date);
+      saveDayState(fullySynced);
+      markDayChangedForCloud(fullySynced);
+      setDayState(fullySynced);
+
+      const nextRecent = recordRecentUserId(cleanBd);
+      setRecentUserIds(nextRecent);
+      markSettingsChangedForCloud(
+        fullySynced.preparedBy,
+        fullySynced.savedCustomDisposals ?? loadSavedCustomDisposals(),
+        { recentUserIds: nextRecent }
+      );
+      void flushCloudUploads();
+
+      return { ok: true };
+    },
+    [dayState, flushCloudUploads, markDayChangedForCloud, markSettingsChangedForCloud]
+  );
+
+  const handleRemoveRecentUserId = React.useCallback(
+    (bdNo: string) => {
+      const nextRecent = removeRecentUserId(bdNo);
+      setRecentUserIds(nextRecent);
+      markSettingsChangedForCloud(
+        dayState.preparedBy,
+        dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+        { recentUserIds: nextRecent }
+      );
+    },
+    [dayState.preparedBy, dayState.savedCustomDisposals, markSettingsChangedForCloud]
+  );
+
   // Persist current date, tab, and sub-tab so user's view never resets
   useEffect(() => {
-    saveUiPrefs({ dateIso, activeTab, unitSubTab });
+    saveUiPrefs({
+      dateIso,
+      activeTab,
+      unitSubTab: unitSubTab === 'log' ? 'state' : unitSubTab,
+    });
   }, [dateIso, activeTab, unitSubTab]);
 
-  // Persist initial/current day snapshot when first loaded
+  // Apply Theme Preference (System / Light / Dark) cleanly on html[data-theme]
   useEffect(() => {
-    saveDayState(dayState);
-  }, [dayState.date]);
+    const media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    const applyResolvedTheme = () => {
+      const resolved: 'light' | 'dark' =
+        themePref === 'system'
+          ? media && !media.matches
+            ? 'light'
+            : 'dark'
+          : themePref;
+      document.documentElement.setAttribute('data-theme', resolved);
+    };
+    applyResolvedTheme();
+    if (themePref === 'system' && media) {
+      media.addEventListener('change', applyResolvedTheme);
+      return () => media.removeEventListener('change', applyResolvedTheme);
+    }
+    return undefined;
+  }, [themePref]);
+
+  const handleChangeThemePref = (pref: ThemePreference) => {
+    const saved = saveThemePreference(pref);
+    setThemePref(saved);
+  };
 
   // Auth listener & initial Cloud download on entering the app
   useEffect(() => {
@@ -201,8 +496,14 @@ export default function App() {
         }
       }
     };
+    const handleOnline = () => {
+      if (dirtyDaysRef.current.size > 0 || dirtySettingsRef.current) {
+        void flushCloudUploads();
+      }
+    };
     document.addEventListener('visibilitychange', handleVisibilityOrHide);
     window.addEventListener('pagehide', handleVisibilityOrHide);
+    window.addEventListener('online', handleOnline);
 
     // Download latest state from Cloud when entering the app
     const bootDateIso = initialPrefs.dateIso;
@@ -216,13 +517,56 @@ export default function App() {
           savePreparedByStorage(result.settings.preparedBy);
           saveCustomDisposalsList(result.settings.savedCustomDisposals);
           saveHiddenQuickEditDisposals(result.settings.hiddenQuickEditDisposals);
+          if (Array.isArray(result.settings.recentUserIds) && result.settings.recentUserIds.length > 0) {
+            const mergedRecent = mergeRecentUserIds(
+              result.settings.recentUserIds,
+              loadRecentUserIds()
+            );
+            saveRecentUserIdsList(mergedRecent);
+            setRecentUserIds(mergedRecent);
+          }
+          if (Array.isArray(result.settings.loginHistory) && result.settings.loginHistory.length > 0) {
+            const mergedHistory = mergeLoginHistoryLists(
+              result.settings.loginHistory,
+              loadLoginHistory()
+            );
+            saveLoginHistoryList(mergedHistory);
+            setLoginHistory(mergedHistory);
+          }
+          if (typeof result.settings.appNotice === 'string') {
+            saveAppNoticeStorage(result.settings.appNotice);
+            setAppNotice(result.settings.appNotice);
+          }
+          if (Array.isArray(result.settings.wings) && result.settings.wings.length > 0) {
+            const savedWings = saveWingsConfig(result.settings.wings);
+            setWings(savedWings);
+          }
+          if (result.settings.rolePermissions) {
+            const savedPerms = saveRolePermissions(result.settings.rolePermissions);
+            setRolePermissions(savedPerms);
+          }
           syncedSettingsHashRef.current = computeSettingsFingerprint(result.settings);
         }
 
+        const effectiveWings = loadWingsConfig();
         fetchedCloudDatesRef.current.add(bootDateIso);
 
+        let normalizedPrior: DayState | null = null;
+        if (result.priorCloudDayState) {
+          normalizedPrior = normalizeDayState(result.priorCloudDayState);
+          saveDayState(normalizedPrior);
+          syncedDayHashesRef.current.set(
+            normalizedPrior.date,
+            computeDayFingerprint(normalizedPrior)
+          );
+        }
+
         if (result.dayState) {
-          const normalizedCloud = normalizeDayState(result.dayState);
+          const baseCloud = normalizeDayState(result.dayState);
+          const normalizedCloud = ensureDayStateHasConfiguredUnits(
+            carryForwardPriorUnitRows(baseCloud, normalizedPrior),
+            effectiveWings
+          );
           if (result.settings) {
             normalizedCloud.preparedBy = result.settings.preparedBy;
             normalizedCloud.savedCustomDisposals = result.settings.savedCustomDisposals;
@@ -230,27 +574,23 @@ export default function App() {
           saveDayState(normalizedCloud);
           syncedDayHashesRef.current.set(
             normalizedCloud.date,
-            computeDayFingerprint(normalizedCloud)
+            computeDayFingerprint(baseCloud)
           );
           if (!userEditedDatesRef.current.has(normalizedCloud.date)) {
             setDayState((curr) =>
               curr.date === normalizedCloud.date ? normalizedCloud : curr
             );
           }
-        } else if (result.priorCloudDayState) {
-          const normalizedPrior = normalizeDayState(result.priorCloudDayState);
-          saveDayState(normalizedPrior);
-          syncedDayHashesRef.current.set(
-            normalizedPrior.date,
-            computeDayFingerprint(normalizedPrior)
-          );
+        } else if (normalizedPrior) {
           if (!userEditedDatesRef.current.has(bootDateIso)) {
-            const inheritedFromCloud = loadDayState(bootDateIso, normalizedPrior);
+            const inheritedFromCloud = ensureDayStateHasConfiguredUnits(
+              loadDayState(bootDateIso, normalizedPrior),
+              effectiveWings
+            );
             if (result.settings) {
               inheritedFromCloud.preparedBy = result.settings.preparedBy;
               inheritedFromCloud.savedCustomDisposals = result.settings.savedCustomDisposals;
             }
-            saveDayState(inheritedFromCloud);
             syncedDayHashesRef.current.set(
               bootDateIso,
               computeDayFingerprint(inheritedFromCloud)
@@ -270,6 +610,7 @@ export default function App() {
       unsubscribeAuth();
       document.removeEventListener('visibilitychange', handleVisibilityOrHide);
       window.removeEventListener('pagehide', handleVisibilityOrHide);
+      window.removeEventListener('online', handleOnline);
       if (uploadTimerRef.current !== null) {
         window.clearTimeout(uploadTimerRef.current);
       }
@@ -278,10 +619,7 @@ export default function App() {
 
   const switchToDate = (nextDateIso: string) => {
     if (!nextDateIso || nextDateIso === dateIso) return;
-    // Save current day's exact state before moving to another date
-    saveDayState(dayState);
     const nextState = loadDayState(nextDateIso, dayState);
-    saveDayState(nextState);
     if (!syncedDayHashesRef.current.has(nextDateIso) && !dirtyDaysRef.current.has(nextDateIso)) {
       syncedDayHashesRef.current.set(nextDateIso, computeDayFingerprint(nextState));
     }
@@ -294,11 +632,12 @@ export default function App() {
       void downloadDayFromCloud(nextDateIso)
         .then((cloudDay) => {
           if (!cloudDay || userEditedDatesRef.current.has(nextDateIso)) return;
-          const normalizedCloud = normalizeDayState(cloudDay);
+          const baseCloud = normalizeDayState(cloudDay);
+          const normalizedCloud = carryForwardPriorUnitRows(baseCloud, dayState);
           saveDayState(normalizedCloud);
           syncedDayHashesRef.current.set(
             nextDateIso,
-            computeDayFingerprint(normalizedCloud)
+            computeDayFingerprint(baseCloud)
           );
           setDayState((curr) => (curr.date === nextDateIso ? normalizedCloud : curr));
         })
@@ -308,21 +647,56 @@ export default function App() {
     }
   };
 
-  // Persist dayState when updated, sync unit rows, and schedule 8s Cloud upload ONLY if data changed
-  const updateAndSaveState = (updater: (prev: DayState) => DayState) => {
+  // Persist dayState when updated, record State Update Log, sync unit rows, and schedule 8s Cloud upload ONLY if data changed
+  const updateAndSaveState = (
+    updater: (prev: DayState) => DayState,
+    logMeta?: {
+      area: StateUpdateLogEntry['area'];
+      unitName: string;
+      action: string;
+    }
+  ) => {
     setDayState((prev) => {
       const next = updater(prev);
+      if (next === prev) return prev;
       const syncedUnits = syncConsolidated155Row(next.consolidatedUnits, next);
-      const fullySynced = { ...next, consolidatedUnits: syncedUnits };
+      let nextLogs = next.updateLogs ?? prev.updateLogs ?? [];
+      const operator = verifiedOperatorRef.current;
+      if (logMeta && operator) {
+        const entry = createStateUpdateLog(
+          next.date,
+          logMeta.area,
+          logMeta.unitName,
+          logMeta.action,
+          operator
+        );
+        nextLogs = [...nextLogs, entry].slice(-500);
+      }
+      const fullySynced: DayState = {
+        ...next,
+        consolidatedUnits: syncedUnits,
+        updateLogs: nextLogs,
+      };
       saveDayState(fullySynced);
       markDayChangedForCloud(fullySynced);
       return fullySynced;
     });
   };
 
-  const handleTabChange = (tab: string) => {
+  const handleTabChange = (tab: string, wingId?: string) => {
     setActiveTab(tab);
-    if (tab !== 'Flying Wing') {
+    const matchingWing = wings.find((w) => w.name === tab || (wingId && w.id === wingId));
+    if (matchingWing) {
+      setActiveWingId(matchingWing.id);
+    } else {
+      const parentWing = wings.find((w) =>
+        w.units.some((u) => u.toLowerCase() === tab.toLowerCase())
+      );
+      if (parentWing) setActiveWingId(parentWing.id);
+    }
+    if (wings.some((w) => w.name === tab)) {
+      setWingSubTab('consolidated');
+    } else {
       setUnitSubTab('state');
     }
   };
@@ -339,448 +713,1073 @@ export default function App() {
     switchToDate(newDateIso);
   };
 
-  const activeUnitName = activeTab === 'Flying Wing' ? '155 UASU BAF' : activeTab;
+  const activeWing = wings.find((w) => w.id === activeWingId) || wings[0];
+  const isWingView = wings.some((w) => w.name === activeTab);
+  const activeUnitName = isWingView ? '155 UASU BAF' : activeTab;
+
+  const currentRole: UserRole | 'GUEST' = verifiedOperator
+    ? getUserRoleByBd(dayState, verifiedOperator.bdNo)
+    : 'GUEST';
+  const can = (key: RolePermissionKey): boolean =>
+    hasRolePermission(currentRole, key, rolePermissions);
 
   // Update Airman Disposal directly from Nominal Roll dropdown
   const handleUpdateAirmanDisposal = (airmanId: string, disposalVal: string) => {
-    updateAndSaveState((prev) => {
-      const currentUnitAirmen = getUnitAirmen(prev, activeUnitName);
-      const airman = currentUnitAirmen.find((a) => a.id === airmanId);
-      if (!airman) return prev;
+    if (!can('manageNominalRoll')) return;
+    const targetAirman = getUnitAirmen(dayState, activeUnitName).find((a) => a.id === airmanId);
+    const targetLabel = targetAirman
+      ? `${targetAirman.rank} ${targetAirman.name}${targetAirman.bdNo ? ` (BD ${targetAirman.bdNo})` : ''}`
+      : airmanId;
+    const actionDesc =
+      disposalVal === '-'
+        ? `Cleared disposal for ${targetLabel} (On Parade)`
+        : `Updated disposal for ${targetLabel} → ${disposalVal}`;
 
-      if (disposalVal === '-') {
-        const updatedDisposals = prev.disposals.filter((d) => d.airmanId !== airmanId);
-        const updatedAirmen = currentUnitAirmen.map((a) =>
-          a.id === airmanId ? { ...a, status: 'on_parade' as const, currentDuty: undefined } : a
-        );
-        return setUnitAirmen({ ...prev, disposals: updatedDisposals }, activeUnitName, updatedAirmen);
-      } else {
-        const dispOpt = DISPOSAL_OPTIONS.find((o) => o.value === disposalVal);
-        const category = dispOpt ? dispOpt.category : 'custom';
-        const isDet = category === 'detTdy';
+    updateAndSaveState(
+      (prev) => {
+        const currentUnitAirmen = getUnitAirmen(prev, activeUnitName);
+        const airman = currentUnitAirmen.find((a) => a.id === airmanId);
+        if (!airman) return prev;
 
-        const existingIdx = prev.disposals.findIndex((d) => d.airmanId === airmanId);
-        let updatedDisposals: DisposalRecord[];
-
-        const newRecord: DisposalRecord = {
-          id: existingIdx >= 0 ? prev.disposals[existingIdx].id : `disp-${Date.now()}-${airmanId}`,
-          airmanId: airman.id,
-          rank: airman.rank,
-          name: airman.name,
-          unit: activeUnitName,
-          category,
-          displayCategory: disposalVal,
-          detail: disposalVal,
-          date: prev.date,
-          period: isDet ? 'Temporary' : 'Night',
-        };
-
-        if (existingIdx >= 0) {
-          updatedDisposals = [...prev.disposals];
-          updatedDisposals[existingIdx] = newRecord;
+        if (disposalVal === '-') {
+          const updatedDisposals = prev.disposals.filter((d) => d.airmanId !== airmanId);
+          const updatedAirmen = currentUnitAirmen.map((a) =>
+            a.id === airmanId ? { ...a, status: 'on_parade' as const, currentDuty: undefined } : a
+          );
+          return setUnitAirmen({ ...prev, disposals: updatedDisposals }, activeUnitName, updatedAirmen);
         } else {
-          updatedDisposals = [...prev.disposals, newRecord];
+          const dispOpt = DISPOSAL_OPTIONS.find((o) => o.value === disposalVal);
+          const category = dispOpt ? dispOpt.category : 'custom';
+          const isDet = category === 'detTdy';
+
+          const existingIdx = prev.disposals.findIndex((d) => d.airmanId === airmanId);
+          let updatedDisposals: DisposalRecord[];
+
+          const newRecord: DisposalRecord = {
+            id: existingIdx >= 0 ? prev.disposals[existingIdx].id : `disp-${Date.now()}-${airmanId}`,
+            airmanId: airman.id,
+            rank: airman.rank,
+            name: airman.name,
+            unit: activeUnitName,
+            category,
+            displayCategory: disposalVal,
+            detail: disposalVal,
+            date: prev.date,
+            period: isDet ? 'Temporary' : 'Night',
+          };
+
+          if (existingIdx >= 0) {
+            updatedDisposals = [...prev.disposals];
+            updatedDisposals[existingIdx] = newRecord;
+          } else {
+            updatedDisposals = [...prev.disposals, newRecord];
+          }
+
+          const updatedAirmen = currentUnitAirmen.map((a) =>
+            a.id === airmanId
+              ? {
+                  ...a,
+                  status: (isDet ? 'detached' : 'duty') as Airman['status'],
+                  currentDuty: disposalVal,
+                }
+              : a
+          );
+
+          const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
+          const trimmedCustom = disposalVal.trim();
+          const nextSavedCustom =
+            category === 'custom' &&
+            trimmedCustom &&
+            !prevSavedCustom.some((c) => c.toLowerCase() === trimmedCustom.toLowerCase())
+              ? [...prevSavedCustom, trimmedCustom]
+              : prevSavedCustom;
+
+          if (nextSavedCustom !== prevSavedCustom) {
+            saveCustomDisposalsList(nextSavedCustom);
+            markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
+          }
+
+          return setUnitAirmen(
+            {
+              ...prev,
+              disposals: updatedDisposals,
+              savedCustomDisposals: nextSavedCustom,
+            },
+            activeUnitName,
+            updatedAirmen
+          );
         }
-
-        const updatedAirmen = currentUnitAirmen.map((a) =>
-          a.id === airmanId
-            ? {
-                ...a,
-                status: (isDet ? 'detached' : 'duty') as Airman['status'],
-                currentDuty: disposalVal,
-              }
-            : a
-        );
-
-        const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
-        const trimmedCustom = disposalVal.trim();
-        const nextSavedCustom =
-          category === 'custom' &&
-          trimmedCustom &&
-          !prevSavedCustom.some((c) => c.toLowerCase() === trimmedCustom.toLowerCase())
-            ? [...prevSavedCustom, trimmedCustom]
-            : prevSavedCustom;
-
-        if (nextSavedCustom !== prevSavedCustom) {
-          saveCustomDisposalsList(nextSavedCustom);
-          markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
-        }
-
-        return setUnitAirmen(
-          {
-            ...prev,
-            disposals: updatedDisposals,
-            savedCustomDisposals: nextSavedCustom,
-          },
-          activeUnitName,
-          updatedAirmen
-        );
+      },
+      {
+        area: 'Nominal Roll',
+        unitName: activeUnitName,
+        action: actionDesc,
       }
-    });
+    );
   };
 
   // Add a custom disposal name persistently
   const handleAddCustomDisposal = (customName: string) => {
     const trimmed = customName.trim();
     if (!trimmed) return;
-    updateAndSaveState((prev) => {
-      const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
-      if (prevSavedCustom.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
-        return prev;
+    updateAndSaveState(
+      (prev) => {
+        const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
+        if (prevSavedCustom.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+          return prev;
+        }
+        const nextSavedCustom = [...prevSavedCustom, trimmed];
+        saveCustomDisposalsList(nextSavedCustom);
+        markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
+        return {
+          ...prev,
+          savedCustomDisposals: nextSavedCustom,
+        };
+      },
+      {
+        area: 'Custom Disposal',
+        unitName: 'Flying Wing',
+        action: `Added custom disposal "${trimmed}"`,
       }
-      const nextSavedCustom = [...prevSavedCustom, trimmed];
-      saveCustomDisposalsList(nextSavedCustom);
-      markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
-      return {
-        ...prev,
-        savedCustomDisposals: nextSavedCustom,
-      };
-    });
+    );
   };
 
   // Delete a saved custom disposal manually via Cross button
   const handleDeleteCustomDisposal = (customName: string) => {
-    updateAndSaveState((prev) => {
-      const targetLower = customName.trim().toLowerCase();
-      const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
-      const nextSavedCustom = prevSavedCustom.filter((c) => c.toLowerCase() !== targetLower);
-      saveCustomDisposalsList(nextSavedCustom);
-      markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
+    updateAndSaveState(
+      (prev) => {
+        const targetLower = customName.trim().toLowerCase();
+        const prevSavedCustom = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
+        const nextSavedCustom = prevSavedCustom.filter((c) => c.toLowerCase() !== targetLower);
+        saveCustomDisposalsList(nextSavedCustom);
+        markSettingsChangedForCloud(prev.preparedBy, nextSavedCustom);
 
-      const affectedAirmanIds = new Set(
-        prev.disposals
-          .filter(
-            (d) =>
-              d.category === 'custom' &&
-              (d.detail || d.displayCategory || '').trim().toLowerCase() === targetLower
-          )
-          .map((d) => d.airmanId)
-          .filter(Boolean)
-      );
-
-      const updatedDisposals = prev.disposals.filter(
-        (d) =>
-          !(
-            d.category === 'custom' &&
-            (d.detail || d.displayCategory || '').trim().toLowerCase() === targetLower
-          )
-      );
-
-      const resetAirmenList = (list: Airman[]) =>
-        list.map((a) =>
-          affectedAirmanIds.has(a.id)
-            ? { ...a, status: 'on_parade' as const, currentDuty: undefined }
-            : a
+        const affectedAirmanIds = new Set(
+          prev.disposals
+            .filter(
+              (d) =>
+                d.category === 'custom' &&
+                (d.detail || d.displayCategory || '').trim().toLowerCase() === targetLower
+            )
+            .map((d) => d.airmanId)
+            .filter(Boolean)
         );
 
-      const nextUnitAirmen: Record<string, Airman[]> = {};
-      if (prev.unitAirmen) {
-        Object.entries(prev.unitAirmen).forEach(([u, list]) => {
-          nextUnitAirmen[u] = resetAirmenList(list);
+        const updatedDisposals = prev.disposals.filter(
+          (d) =>
+            !(
+              d.category === 'custom' &&
+              (d.detail || d.displayCategory || '').trim().toLowerCase() === targetLower
+            )
+        );
+
+        const resetAirmenList = (list: Airman[]) =>
+          list.map((a) =>
+            affectedAirmanIds.has(a.id)
+              ? { ...a, status: 'on_parade' as const, currentDuty: undefined }
+              : a
+          );
+
+        const nextUnitAirmen: Record<string, Airman[]> = {};
+        if (prev.unitAirmen) {
+          Object.entries(prev.unitAirmen).forEach(([u, list]) => {
+            nextUnitAirmen[u] = resetAirmenList(list);
+          });
+        }
+
+        const nextConsolidatedUnits = prev.consolidatedUnits.map((u) => {
+          if (!u.customDisposals && !u.disposalCounts) return u;
+          const nextCustom = u.customDisposals ? { ...u.customDisposals } : undefined;
+          const nextCounts = u.disposalCounts ? { ...u.disposalCounts } : undefined;
+          if (nextCustom) {
+            Object.keys(nextCustom).forEach((k) => {
+              if (k.trim().toLowerCase() === targetLower) delete nextCustom[k];
+            });
+          }
+          if (nextCounts) {
+            Object.keys(nextCounts).forEach((k) => {
+              if (k.trim().toLowerCase() === targetLower) delete nextCounts[k];
+            });
+          }
+          return { ...u, customDisposals: nextCustom, disposalCounts: nextCounts };
         });
+
+        return {
+          ...prev,
+          savedCustomDisposals: nextSavedCustom,
+          disposals: updatedDisposals,
+          airmen155: resetAirmenList(prev.airmen155),
+          unitAirmen: nextUnitAirmen,
+          consolidatedUnits: nextConsolidatedUnits,
+        };
+      },
+      {
+        area: 'Custom Disposal',
+        unitName: activeTab === 'Flying Wing' ? 'Flying Wing' : activeUnitName,
+        action: `Deleted custom disposal "${customName.trim()}"`,
       }
-
-      const nextConsolidatedUnits = prev.consolidatedUnits.map((u) => {
-        if (!u.customDisposals && !u.disposalCounts) return u;
-        const nextCustom = u.customDisposals ? { ...u.customDisposals } : undefined;
-        const nextCounts = u.disposalCounts ? { ...u.disposalCounts } : undefined;
-        if (nextCustom) {
-          Object.keys(nextCustom).forEach((k) => {
-            if (k.trim().toLowerCase() === targetLower) delete nextCustom[k];
-          });
-        }
-        if (nextCounts) {
-          Object.keys(nextCounts).forEach((k) => {
-            if (k.trim().toLowerCase() === targetLower) delete nextCounts[k];
-          });
-        }
-        return { ...u, customDisposals: nextCustom, disposalCounts: nextCounts };
-      });
-
-      return {
-        ...prev,
-        savedCustomDisposals: nextSavedCustom,
-        disposals: updatedDisposals,
-        airmen155: resetAirmenList(prev.airmen155),
-        unitAirmen: nextUnitAirmen,
-        consolidatedUnits: nextConsolidatedUnits,
-      };
-    });
+    );
   };
 
   // Remove Disposal Handler
   const handleRemoveDisposal = (disposalId: string) => {
-    updateAndSaveState((prev) => {
-      const dispToRemove = prev.disposals.find((d) => d.id === disposalId);
-      const filteredDisposals = prev.disposals.filter((d) => d.id !== disposalId);
+    if (!can('editUnitDisposals')) return;
+    const dispTarget = dayState.disposals.find((d) => d.id === disposalId);
+    updateAndSaveState(
+      (prev) => {
+        const dispToRemove = prev.disposals.find((d) => d.id === disposalId);
+        const filteredDisposals = prev.disposals.filter((d) => d.id !== disposalId);
 
-      if (dispToRemove && dispToRemove.airmanId) {
-        const unit = dispToRemove.unit || activeUnitName;
-        const updatedList = getUnitAirmen(prev, unit).map((a) =>
-          a.id === dispToRemove.airmanId
-            ? { ...a, status: 'on_parade' as const, currentDuty: undefined }
-            : a
-        );
-        return setUnitAirmen({ ...prev, disposals: filteredDisposals }, unit, updatedList);
+        if (dispToRemove && dispToRemove.airmanId) {
+          const unit = dispToRemove.unit || activeUnitName;
+          const updatedList = getUnitAirmen(prev, unit).map((a) =>
+            a.id === dispToRemove.airmanId
+              ? { ...a, status: 'on_parade' as const, currentDuty: undefined }
+              : a
+          );
+          return setUnitAirmen({ ...prev, disposals: filteredDisposals }, unit, updatedList);
+        }
+
+        return {
+          ...prev,
+          disposals: filteredDisposals,
+        };
+      },
+      {
+        area: 'Unit State',
+        unitName: dispTarget?.unit || activeUnitName,
+        action: dispTarget
+          ? `Removed disposal (${dispTarget.displayCategory || dispTarget.detail}) for ${dispTarget.rank} ${dispTarget.name}`
+          : 'Removed disposal record',
       }
-
-      return {
-        ...prev,
-        disposals: filteredDisposals,
-      };
-    });
+    );
   };
 
   // Quick toggle parade status
   const handleToggleAirmanParade = (airmanId: string) => {
-    updateAndSaveState((prev) => {
-      const currentUnitAirmen = getUnitAirmen(prev, activeUnitName);
-      const airman = currentUnitAirmen.find((a) => a.id === airmanId);
-      if (!airman) return prev;
+    if (!can('editUnitDisposals')) return;
+    const targetAirman = getUnitAirmen(dayState, activeUnitName).find((a) => a.id === airmanId);
+    updateAndSaveState(
+      (prev) => {
+        const currentUnitAirmen = getUnitAirmen(prev, activeUnitName);
+        const airman = currentUnitAirmen.find((a) => a.id === airmanId);
+        if (!airman) return prev;
 
-      if (airman.status === 'on_parade') {
-        const newDisp: DisposalRecord = {
-          id: `disp-${Date.now()}`,
-          airmanId: airman.id,
-          rank: airman.rank,
-          name: airman.name,
-          unit: activeUnitName,
-          category: 'officeDuty',
-          displayCategory: 'Office Duty',
-          detail: 'Office Duty',
-          date: prev.date,
-          period: 'Night',
-        };
-        const updatedList = currentUnitAirmen.map((a) =>
-          a.id === airmanId ? { ...a, status: 'duty' as const, currentDuty: 'Office Duty' } : a
-        );
-        return setUnitAirmen(
-          { ...prev, disposals: [...prev.disposals, newDisp] },
-          activeUnitName,
-          updatedList
-        );
-      } else {
-        const updatedList = currentUnitAirmen.map((a) =>
-          a.id === airmanId ? { ...a, status: 'on_parade' as const, currentDuty: undefined } : a
-        );
-        return setUnitAirmen(
-          { ...prev, disposals: prev.disposals.filter((d) => d.airmanId !== airmanId) },
-          activeUnitName,
-          updatedList
-        );
+        if (airman.status === 'on_parade') {
+          const newDisp: DisposalRecord = {
+            id: `disp-${Date.now()}`,
+            airmanId: airman.id,
+            rank: airman.rank,
+            name: airman.name,
+            unit: activeUnitName,
+            category: 'officeDuty',
+            displayCategory: 'Office Duty',
+            detail: 'Office Duty',
+            date: prev.date,
+            period: 'Night',
+          };
+          const updatedList = currentUnitAirmen.map((a) =>
+            a.id === airmanId ? { ...a, status: 'duty' as const, currentDuty: 'Office Duty' } : a
+          );
+          return setUnitAirmen(
+            { ...prev, disposals: [...prev.disposals, newDisp] },
+            activeUnitName,
+            updatedList
+          );
+        } else {
+          const updatedList = currentUnitAirmen.map((a) =>
+            a.id === airmanId ? { ...a, status: 'on_parade' as const, currentDuty: undefined } : a
+          );
+          return setUnitAirmen(
+            { ...prev, disposals: prev.disposals.filter((d) => d.airmanId !== airmanId) },
+            activeUnitName,
+            updatedList
+          );
+        }
+      },
+      {
+        area: 'Unit State',
+        unitName: activeUnitName,
+        action: targetAirman
+          ? `Toggled parade status for ${targetAirman.rank} ${targetAirman.name}`
+          : 'Toggled parade status',
       }
-    });
+    );
   };
 
   // Add new airman to active unit roster (maintaining Rank & BD seniority & cross-unit BD uniqueness)
   const handleAddAirmanToRoster = (newAirmanData: Omit<Airman, 'id'>) => {
-    updateAndSaveState((prev) => {
-      const targetUnit = newAirmanData.unit || activeUnitName;
-      if (newAirmanData.bdNo && findExistingBdConflict(prev, newAirmanData.bdNo)) {
-        return prev;
+    const targetUnit = newAirmanData.unit || activeUnitName;
+    updateAndSaveState(
+      (prev) => {
+        if (newAirmanData.bdNo && findExistingBdConflict(prev, newAirmanData.bdNo)) {
+          return prev;
+        }
+        const currentList = getUnitAirmen(prev, targetUnit);
+        const updatedList = sortAirmenBySeniority([
+          ...currentList,
+          {
+            ...newAirmanData,
+            unit: targetUnit,
+            id: `airman-${Date.now()}`,
+          },
+        ]);
+        return setUnitAirmen(prev, targetUnit, updatedList);
+      },
+      {
+        area: 'Nominal Roll',
+        unitName: targetUnit,
+        action: `Added airman ${newAirmanData.rank} ${newAirmanData.name} (BD ${newAirmanData.bdNo || '-'})`,
       }
-      const currentList = getUnitAirmen(prev, targetUnit);
-      const updatedList = sortAirmenBySeniority([
-        ...currentList,
-        {
-          ...newAirmanData,
-          unit: targetUnit,
-          id: `airman-${Date.now()}`,
-        },
-      ]);
-      return setUnitAirmen(prev, targetUnit, updatedList);
-    });
+    );
   };
 
   // Bulk add multiple airmen to active unit roster (maintaining Rank & BD seniority & cross-unit BD uniqueness)
   const handleAddAirmenBulk = (newAirmenList: Omit<Airman, 'id'>[]) => {
     if (newAirmenList.length === 0) return;
-    updateAndSaveState((prev) => {
-      const targetUnit = newAirmenList[0].unit || activeUnitName;
-      const currentList = getUnitAirmen(prev, targetUnit);
-      const existingGlobalBds = getAllExistingBdUnitMap(prev);
-      const seenBatch = new Set<string>();
-      const baseTime = Date.now();
-      const created: Airman[] = [];
+    const targetUnit = newAirmenList[0].unit || activeUnitName;
+    updateAndSaveState(
+      (prev) => {
+        const currentList = getUnitAirmen(prev, targetUnit);
+        const existingGlobalBds = getAllExistingBdUnitMap(prev);
+        const seenBatch = new Set<string>();
+        const baseTime = Date.now();
+        const created: Airman[] = [];
 
-      newAirmenList.forEach((item, idx) => {
-        const cleanBd = (item.bdNo || '').trim();
-        if (!cleanBd || existingGlobalBds.has(cleanBd) || seenBatch.has(cleanBd)) {
-          return;
-        }
-        seenBatch.add(cleanBd);
-        created.push({
-          ...item,
-          bdNo: cleanBd,
-          unit: item.unit || targetUnit,
-          id: `airman-${baseTime}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        newAirmenList.forEach((item, idx) => {
+          const cleanBd = (item.bdNo || '').trim();
+          if (!cleanBd || existingGlobalBds.has(cleanBd) || seenBatch.has(cleanBd)) {
+            return;
+          }
+          seenBatch.add(cleanBd);
+          created.push({
+            ...item,
+            bdNo: cleanBd,
+            unit: item.unit || targetUnit,
+            id: `airman-${baseTime}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+          });
         });
-      });
 
-      if (created.length === 0) return prev;
-      const mergedSorted = sortAirmenBySeniority([...currentList, ...created]);
-      return setUnitAirmen(prev, targetUnit, mergedSorted);
-    });
+        if (created.length === 0) return prev;
+        const mergedSorted = sortAirmenBySeniority([...currentList, ...created]);
+        return setUnitAirmen(prev, targetUnit, mergedSorted);
+      },
+      {
+        area: 'Nominal Roll',
+        unitName: targetUnit,
+        action: `Imported ${newAirmenList.length} airmen to Nominal Roll`,
+      }
+    );
   };
 
   // Update Prepared By
   const handleSavePreparedBy = (updated: PreparedByInfo) => {
+    if (!can('editPreparedBy')) return;
     savePreparedByStorage(updated);
-    updateAndSaveState((prev) => {
-      const customList = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
-      markSettingsChangedForCloud(updated, customList);
-      return {
-        ...prev,
-        preparedBy: updated,
-      };
-    });
+    updateAndSaveState(
+      (prev) => {
+        const customList = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
+        markSettingsChangedForCloud(updated, customList);
+        return {
+          ...prev,
+          preparedBy: updated,
+        };
+      },
+      {
+        area: 'Prepared By',
+        unitName: 'Flying Wing',
+        action: `Updated Prepared By signature (${updated.rank} ${updated.name})`,
+      }
+    );
   };
 
-  // Update unit remarks
+  // Update unit remarks (live typing, logged on blur via handleCommitRemarks)
   const handleUpdateRemarks = (remarks: string) => {
+    if (!can('editUnitDisposals')) return;
     updateAndSaveState((prev) => setUnitRemarks(prev, activeUnitName, remarks));
+  };
+
+  const handleCommitRemarks = (remarks: string) => {
+    if (!can('editUnitDisposals')) return;
+    updateAndSaveState(
+      (prev) => ({ ...setUnitRemarks(prev, activeUnitName, remarks) }),
+      {
+        area: 'Unit State',
+        unitName: activeUnitName,
+        action: `Updated unit remarks to "${remarks.trim() || 'Nil'}"`,
+      }
+    );
   };
 
   // Delete airman from active unit roster
   const handleDeleteAirman = (airmanId: string) => {
-    updateAndSaveState((prev) => {
-      const updatedList = getUnitAirmen(prev, activeUnitName).filter((a) => a.id !== airmanId);
-      return setUnitAirmen(
-        { ...prev, disposals: prev.disposals.filter((d) => d.airmanId !== airmanId) },
-        activeUnitName,
-        updatedList
-      );
-    });
+    if (!can('deleteNominalRollAirman')) return;
+    const targetAirman = getUnitAirmen(dayState, activeUnitName).find((a) => a.id === airmanId);
+    updateAndSaveState(
+      (prev) => {
+        const updatedList = getUnitAirmen(prev, activeUnitName).filter((a) => a.id !== airmanId);
+        return setUnitAirmen(
+          { ...prev, disposals: prev.disposals.filter((d) => d.airmanId !== airmanId) },
+          activeUnitName,
+          updatedList
+        );
+      },
+      {
+        area: 'Nominal Roll',
+        unitName: activeUnitName,
+        action: targetAirman
+          ? `Removed airman ${targetAirman.rank} ${targetAirman.name} (BD ${targetAirman.bdNo || '-'})`
+          : 'Removed airman from Nominal Roll',
+      }
+    );
   };
 
   // Full airman update (from clicking row in Nominal Roll)
   const handleUpdateAirmanFull = (updatedAirman: Airman, disposalVal: string) => {
-    updateAndSaveState((prev) => {
-      const targetUnit = updatedAirman.unit || activeUnitName;
-      if (
-        updatedAirman.bdNo &&
-        findExistingBdConflict(prev, updatedAirman.bdNo, updatedAirman.id)
-      ) {
-        return prev;
+    if (!can('manageNominalRoll')) return;
+    const targetUnit = updatedAirman.unit || activeUnitName;
+    updateAndSaveState(
+      (prev) => {
+        if (
+          updatedAirman.bdNo &&
+          findExistingBdConflict(prev, updatedAirman.bdNo, updatedAirman.id)
+        ) {
+          return prev;
+        }
+        const updatedAirmen = sortAirmenBySeniority(
+          getUnitAirmen(prev, targetUnit).map((a) =>
+            a.id === updatedAirman.id ? { ...updatedAirman } : a
+          )
+        );
+
+        let updatedDisposals = prev.disposals.filter((d) => d.airmanId !== updatedAirman.id);
+
+        if (disposalVal && disposalVal !== '-') {
+          const dispOpt = DISPOSAL_OPTIONS.find((o) => o.value === disposalVal);
+          const category = dispOpt ? dispOpt.category : 'custom';
+          const isDet = category === 'detTdy';
+
+          const newRecord: DisposalRecord = {
+            id: `disp-${Date.now()}-${updatedAirman.id}`,
+            airmanId: updatedAirman.id,
+            rank: updatedAirman.rank,
+            name: updatedAirman.name,
+            unit: targetUnit,
+            category,
+            displayCategory: disposalVal,
+            detail: disposalVal,
+            date: prev.date,
+            period: isDet ? 'Temporary' : 'Night',
+          };
+          updatedDisposals.push(newRecord);
+        }
+
+        return setUnitAirmen({ ...prev, disposals: updatedDisposals }, targetUnit, updatedAirmen);
+      },
+      {
+        area: 'Nominal Roll',
+        unitName: targetUnit,
+        action: `Updated ${updatedAirman.rank} ${updatedAirman.name} (BD ${updatedAirman.bdNo || '-'}) → ${disposalVal && disposalVal !== '-' ? disposalVal : 'On Parade'}`,
       }
-      const updatedAirmen = sortAirmenBySeniority(
-        getUnitAirmen(prev, targetUnit).map((a) =>
-          a.id === updatedAirman.id ? { ...updatedAirman } : a
-        )
-      );
-
-      let updatedDisposals = prev.disposals.filter((d) => d.airmanId !== updatedAirman.id);
-
-      if (disposalVal && disposalVal !== '-') {
-        const dispOpt = DISPOSAL_OPTIONS.find((o) => o.value === disposalVal);
-        const category = dispOpt ? dispOpt.category : 'custom';
-        const isDet = category === 'detTdy';
-
-        const newRecord: DisposalRecord = {
-          id: `disp-${Date.now()}-${updatedAirman.id}`,
-          airmanId: updatedAirman.id,
-          rank: updatedAirman.rank,
-          name: updatedAirman.name,
-          unit: targetUnit,
-          category,
-          displayCategory: disposalVal,
-          detail: disposalVal,
-          date: prev.date,
-          period: isDet ? 'Temporary' : 'Night',
-        };
-        updatedDisposals.push(newRecord);
-      }
-
-      return setUnitAirmen({ ...prev, disposals: updatedDisposals }, targetUnit, updatedAirmen);
-    });
+    );
   };
 
   // Update Squadron in Flying Wing
   const handleUpdateSquadronRow = (updatedRow: UnitRowState) => {
-    updateAndSaveState((prev) => ({
-      ...prev,
-      consolidatedUnits: prev.consolidatedUnits.map((u) =>
-        u.sqnUnit === updatedRow.sqnUnit ? updatedRow : u
-      ),
-    }));
+    if (!can('editQuickSqnCount')) return;
+    updateAndSaveState(
+      (prev) => ({
+        ...prev,
+        consolidatedUnits: prev.consolidatedUnits.map((u) =>
+          u.sqnUnit === updatedRow.sqnUnit ? updatedRow : u
+        ),
+      }),
+      {
+        area: 'Quick Edit Sqn Count',
+        unitName: updatedRow.sqnUnit,
+        action: `Updated Sqn count (Total Str: ${updatedRow.totalStr}, Out Parade: ${updatedRow.totalOutParade}, On Parade: ${updatedRow.onParadeForecast})`,
+      }
+    );
+  };
+
+  const openSettingsModal = (tab: SettingsTabId = 'theme') => {
+    if (!can('accessSettings') && currentRole !== 'OWNER') return;
+    setSettingsInitialTab(tab);
+    setIsSettingsOpen(true);
+  };
+
+  const handleAddWing = (name: string, shortName: string): { ok: boolean; error?: string } => {
+    if (!can('manageWingsAndUnits')) {
+      return { ok: false, error: 'Wing management is restricted for your role.' };
+    }
+    const cleanName = name.trim();
+    if (!cleanName) return { ok: false, error: 'Wing name is required.' };
+    if (wings.some((w) => w.name.toLowerCase() === cleanName.toLowerCase())) {
+      return { ok: false, error: `Wing "${cleanName}" already exists.` };
+    }
+    const cleanShort = (shortName.trim() || cleanName.slice(0, 12)).toUpperCase();
+    const newWing: WingConfig = {
+      id: `wing-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: cleanName,
+      shortName: cleanShort,
+      units: [],
+    };
+    const nextWings = saveWingsConfig([...wings, newWing]);
+    setWings(nextWings);
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { wings: nextWings }
+    );
+    void flushCloudUploads();
+    return { ok: true };
+  };
+
+  const handleDeleteWing = (wingId: string) => {
+    if (!can('manageWingsAndUnits') || wingId === 'flying-wing') return;
+    const removedWing = wings.find((w) => w.id === wingId);
+    const nextWings = saveWingsConfig(wings.filter((w) => w.id !== wingId));
+    setWings(nextWings);
+    if (activeWingId === wingId || (removedWing && activeTab === removedWing.name)) {
+      setActiveWingId('flying-wing');
+      setActiveTab('Flying Wing');
+      setWingSubTab('consolidated');
+    }
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { wings: nextWings }
+    );
+    void flushCloudUploads();
+  };
+
+  const handleAddUnitToWing = (
+    wingId: string,
+    unitName: string
+  ): { ok: boolean; error?: string } => {
+    if (!can('manageWingsAndUnits')) {
+      return { ok: false, error: 'Unit management is restricted for your role.' };
+    }
+    const cleanUnit = unitName.trim();
+    if (!cleanUnit) return { ok: false, error: 'Sqn/Unit name is required.' };
+    const duplicate = wings.some((w) =>
+      w.units.some((u) => u.toLowerCase() === cleanUnit.toLowerCase())
+    );
+    if (duplicate) {
+      return { ok: false, error: `Sqn/Unit "${cleanUnit}" already exists.` };
+    }
+
+    const nextWings = saveWingsConfig(
+      wings.map((w) => (w.id === wingId ? { ...w, units: [...w.units, cleanUnit] } : w))
+    );
+    setWings(nextWings);
+
+    // Ensure the newly added Squadron/Unit exists in dayState.consolidatedUnits
+    updateAndSaveState(
+      (prev) => {
+        const exists = prev.consolidatedUnits.some(
+          (u) => u.sqnUnit.toLowerCase() === cleanUnit.toLowerCase()
+        );
+        if (exists) return prev;
+        return {
+          ...prev,
+          consolidatedUnits: [...prev.consolidatedUnits, createBlankUnitRow(cleanUnit)],
+        };
+      },
+      {
+        area: 'Unit State',
+        unitName: cleanUnit,
+        action: `Added Sqn/Unit "${cleanUnit}"`,
+      }
+    );
+
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { wings: nextWings }
+    );
+    void flushCloudUploads();
+    return { ok: true };
+  };
+
+  const handleDeleteUnitFromWing = (wingId: string, unitName: string) => {
+    if (!can('manageWingsAndUnits')) return;
+    const nextWings = saveWingsConfig(
+      wings.map((w) =>
+        w.id === wingId
+          ? { ...w, units: w.units.filter((u) => u.toLowerCase() !== unitName.toLowerCase()) }
+          : w
+      )
+    );
+    setWings(nextWings);
+    if (activeTab.toLowerCase() === unitName.toLowerCase()) {
+      setActiveWingId('flying-wing');
+      setActiveTab('Flying Wing');
+      setWingSubTab('consolidated');
+    }
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { wings: nextWings }
+    );
+    void flushCloudUploads();
+  };
+
+  const handleDeleteAirmanByUnit = (unitName: string, airmanId: string) => {
+    if (!can('manageUsers')) return;
+    const targetAirman = getUnitAirmen(dayState, unitName).find((a) => a.id === airmanId);
+    updateAndSaveState(
+      (prev) => {
+        const updatedList = getUnitAirmen(prev, unitName).filter((a) => a.id !== airmanId);
+        return setUnitAirmen(
+          { ...prev, disposals: prev.disposals.filter((d) => d.airmanId !== airmanId) },
+          unitName,
+          updatedList
+        );
+      },
+      {
+        area: 'Nominal Roll',
+        unitName,
+        action: targetAirman
+          ? `Removed airman ${targetAirman.rank} ${targetAirman.name} (BD ${targetAirman.bdNo || '-'})`
+          : 'Removed airman from Nominal Roll',
+      }
+    );
+  };
+
+  const handleAddAirmanFromSettings = (newAirmanData: Omit<Airman, 'id'>) => {
+    if (!can('manageUsers')) return;
+    const targetUnit = newAirmanData.unit || activeUnitName;
+    updateAndSaveState(
+      (prev) => {
+        if (newAirmanData.bdNo && findExistingBdConflict(prev, newAirmanData.bdNo)) {
+          return prev;
+        }
+        const currentList = getUnitAirmen(prev, targetUnit);
+        const updatedList = sortAirmenBySeniority([
+          ...currentList,
+          {
+            ...newAirmanData,
+            role: currentRole === 'OWNER' ? newAirmanData.role || 'USER' : 'USER',
+            unit: targetUnit,
+            id: `airman-${Date.now()}`,
+          },
+        ]);
+        return setUnitAirmen(prev, targetUnit, updatedList);
+      },
+      {
+        area: 'Nominal Roll',
+        unitName: targetUnit,
+        action: `Added user ${newAirmanData.rank} ${newAirmanData.name} (BD ${newAirmanData.bdNo || '-'})`,
+      }
+    );
+  };
+
+  const handleUpdateUserProfile = (
+    unitName: string,
+    airmanId: string,
+    updates: {
+      rank?: Rank;
+      name?: string;
+      bdNo?: string;
+      trade?: string;
+      flight?: string;
+      role?: UserRole;
+      adminPin?: string;
+    }
+  ) => {
+    if (!can('manageUsers')) return;
+    const targetAirman = getUnitAirmen(dayState, unitName).find((a) => a.id === airmanId);
+    const changes: string[] = [];
+    if (
+      currentRole === 'OWNER' &&
+      updates.role &&
+      updates.role !== (targetAirman?.role || 'USER')
+    ) {
+      changes.push(`Role → ${updates.role}`);
+    }
+    if (updates.adminPin !== undefined && updates.adminPin !== (targetAirman?.adminPin || '')) {
+      changes.push(updates.adminPin ? 'Admin Login PIN updated' : 'Admin Login PIN cleared');
+    }
+    if (updates.name && updates.name !== targetAirman?.name) {
+      changes.push(`Name → ${updates.name}`);
+    }
+    if (updates.rank && updates.rank !== targetAirman?.rank) {
+      changes.push(`Rank → ${updates.rank}`);
+    }
+
+    updateAndSaveState(
+      (prev) => {
+        if (
+          updates.bdNo &&
+          findExistingBdConflict(prev, updates.bdNo, airmanId)
+        ) {
+          return prev;
+        }
+        const updatedList = getUnitAirmen(prev, unitName).map((a) => {
+          if (a.id !== airmanId) return a;
+          const next: Airman = { ...a };
+          if (updates.rank !== undefined) next.rank = updates.rank;
+          if (updates.name !== undefined) next.name = updates.name.trim();
+          if (updates.bdNo !== undefined) next.bdNo = updates.bdNo.trim();
+          if (updates.trade !== undefined) next.trade = updates.trade.trim();
+          if (updates.flight !== undefined) next.flight = updates.flight.trim();
+          if (currentRole === 'OWNER' && updates.role !== undefined) {
+            next.role = updates.role;
+          }
+          if (updates.adminPin !== undefined) {
+            const cleanPin = updates.adminPin.trim();
+            if (cleanPin) {
+              next.adminPin = cleanPin;
+            } else {
+              delete next.adminPin;
+            }
+          }
+          return next;
+        });
+        return setUnitAirmen(prev, unitName, updatedList);
+      },
+      {
+        area: 'Nominal Roll',
+        unitName,
+        action: targetAirman
+          ? `Updated profile for ${targetAirman.rank} ${targetAirman.name} (BD ${targetAirman.bdNo || '-'})${
+              changes.length ? `: ${changes.join(', ')}` : ''
+            }`
+          : 'Updated user profile in User Management',
+      }
+    );
+  };
+
+  const handleSaveRolePermissions = (next: RolePermissionsConfig) => {
+    if (currentRole !== 'OWNER') return;
+    const saved = saveRolePermissions(next);
+    setRolePermissions(saved);
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { rolePermissions: saved }
+    );
+    void flushCloudUploads();
+  };
+
+  const handlePullLatestFromCloud = async () => {
+    const result = await downloadFromCloudOnEnter(dateIso);
+    let nextWings = wings;
+    if (result.settings) {
+      savePreparedByStorage(result.settings.preparedBy);
+      saveCustomDisposalsList(result.settings.savedCustomDisposals);
+      saveHiddenQuickEditDisposals(result.settings.hiddenQuickEditDisposals);
+      if (Array.isArray(result.settings.recentUserIds)) {
+        const mergedRecent = mergeRecentUserIds(result.settings.recentUserIds, loadRecentUserIds());
+        saveRecentUserIdsList(mergedRecent);
+        setRecentUserIds(mergedRecent);
+      }
+      if (Array.isArray(result.settings.loginHistory)) {
+        const mergedHistory = mergeLoginHistoryLists(result.settings.loginHistory, loadLoginHistory());
+        saveLoginHistoryList(mergedHistory);
+        setLoginHistory(mergedHistory);
+      }
+      if (typeof result.settings.appNotice === 'string') {
+        saveAppNoticeStorage(result.settings.appNotice);
+        setAppNotice(result.settings.appNotice);
+        setIsNoticeDismissed(false);
+      }
+      if (Array.isArray(result.settings.wings) && result.settings.wings.length > 0) {
+        nextWings = saveWingsConfig(result.settings.wings);
+        setWings(nextWings);
+      }
+      if (result.settings.rolePermissions) {
+        const savedPerms = saveRolePermissions(result.settings.rolePermissions);
+        setRolePermissions(savedPerms);
+      }
+      syncedSettingsHashRef.current = computeSettingsFingerprint(result.settings);
+    }
+
+    let normalizedPrior: DayState | null = null;
+    if (result.priorCloudDayState) {
+      normalizedPrior = normalizeDayState(result.priorCloudDayState);
+      saveDayState(normalizedPrior);
+    }
+
+    if (result.dayState) {
+      const baseCloud = normalizeDayState(result.dayState);
+      const normalizedCloud = ensureDayStateHasConfiguredUnits(
+        carryForwardPriorUnitRows(baseCloud, normalizedPrior),
+        nextWings
+      );
+      if (result.settings) {
+        normalizedCloud.preparedBy = result.settings.preparedBy;
+        normalizedCloud.savedCustomDisposals = result.settings.savedCustomDisposals;
+      }
+      saveDayState(normalizedCloud);
+      syncedDayHashesRef.current.set(normalizedCloud.date, computeDayFingerprint(baseCloud));
+      setDayState(normalizedCloud);
+    }
+  };
+
+  const handleSyncNowToCloud = async () => {
+    const currentSettings: CloudSettings = {
+      preparedBy: dayState.preparedBy,
+      savedCustomDisposals: dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      hiddenQuickEditDisposals: loadHiddenQuickEditDisposals(),
+      recentUserIds: loadRecentUserIds(),
+      loginHistory: loadLoginHistory(),
+      appNotice: loadAppNotice(),
+      wings: loadWingsConfig(),
+      rolePermissions: loadRolePermissions(),
+    };
+    await uploadDayToCloud(dayState);
+    syncedDayHashesRef.current.set(dayState.date, computeDayFingerprint(dayState));
+    dirtyDaysRef.current.delete(dayState.date);
+    await uploadSettingsToCloud(currentSettings);
+    syncedSettingsHashRef.current = computeSettingsFingerprint(currentSettings);
+    dirtySettingsRef.current = null;
+  };
+
+  const handleClearLoginHistory = () => {
+    if (!can('manageCloudAndNotice')) return;
+    saveLoginHistoryList([]);
+    setLoginHistory([]);
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { loginHistory: [] }
+    );
+    void flushCloudUploads();
+  };
+
+  const handleSaveAppNotice = (notice: string) => {
+    if (!can('manageCloudAndNotice')) return;
+    const clean = saveAppNoticeStorage(notice);
+    setAppNotice(clean);
+    setIsNoticeDismissed(false);
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { appNotice: clean }
+    );
+    void flushCloudUploads();
   };
 
   const activeUnitAirmenCount = getUnitAirmen(dayState, activeUnitName).length;
+  const totalDayLogsCount = dayState.updateLogs?.length || 0;
+  const activeUnitLogsCount = (dayState.updateLogs || []).filter(
+    (entry) => entry.unitName === activeUnitName
+  ).length;
+
+  if (!verifiedOperator && !isGuestSession) {
+    return (
+      <>
+        <LoginPortalView
+          dayState={dayState}
+          wings={wings}
+          recentUserIds={recentUserIds}
+          onRemoveRecentUserId={handleRemoveRecentUserId}
+          onLogin={handleOperatorVerified}
+          onSignUp={handleSignUpFromPortal}
+          onGuestLogin={handleGuestLogin}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#070d18] text-slate-100 flex flex-col font-sans antialiased selection:bg-emerald-500 selection:text-black">
-      <div className={isPrintOpen ? 'no-print flex-1 flex flex-col' : 'flex-1 flex flex-col'}>
-        {/* Controls Bar with Date and Flying Wing + All Squadron/Unit tabs */}
-        <ControlsBar
-          dateIso={dateIso}
-          formattedDate={dayState.formattedDisplayDate}
-          onPrevDate={handlePrevDate}
-          onNextDate={handleNextDate}
-          onDateChange={handleDateChange}
-          onOpenPrint={() => setIsPrintOpen(true)}
+    <div className="min-h-screen bg-[#070d18] text-slate-100 flex font-sans antialiased selection:bg-emerald-500 selection:text-black">
+      {/* Left Navigation Sidebar (Pic 2 Layout) */}
+      {!isQuickEditActive && !isPrintOpen && (
+        <Sidebar
+          wings={wings}
+          activeWingId={activeWing.id}
           activeTab={activeTab}
-          onTabChange={handleTabChange}
+          wingSubTab={wingSubTab}
+          dayState={dayState}
+          operator={verifiedOperator}
+          operatorRole={currentRole}
+          totalDayLogsCount={totalDayLogsCount}
+          isCollapsed={isSidebarCollapsed}
+          isMobileOpen={isMobileSidebarOpen}
+          isSettingsOpen={isSettingsOpen}
+          canEditPreparedBy={can('editPreparedBy')}
+          canViewUpdateLog={can('viewUpdateLog')}
+          canAccessSettings={can('accessSettings')}
+          onToggleCollapse={() => setIsSidebarCollapsed((p) => !p)}
+          onCloseMobile={() => setIsMobileSidebarOpen(false)}
+          onSelectWing={(wing) => {
+            setActiveWingId(wing.id);
+            setActiveTab(wing.name);
+            setWingSubTab('consolidated');
+          }}
+          onSelectPreparedBy={() =>
+            can('editPreparedBy') && requireOperatorAuth(() => setIsPreparedByOpen(true))
+          }
+          onSelectWingLog={() => {
+            setActiveTab(activeWing.name);
+            setWingSubTab('log');
+          }}
+          onSelectUnit={(unitName, wingId) => handleTabChange(unitName, wingId)}
+          onOpenSettings={() => openSettingsModal('theme')}
+          onLogout={handleLogout}
         />
+      )}
+
+      {/* Right Main Workspace Column */}
+      <div
+        className={
+          isPrintOpen
+            ? 'no-print flex-1 flex flex-col min-w-0'
+            : 'flex-1 flex flex-col min-w-0'
+        }
+      >
+        {/* Top Header Bar hidden during isolated Quick Edit Sqn Count page */}
+        {!isQuickEditActive && (
+          <ControlsBar
+            dateIso={dateIso}
+            formattedDate={dayState.formattedDisplayDate}
+            onPrevDate={handlePrevDate}
+            onNextDate={handleNextDate}
+            onDateChange={handleDateChange}
+            onOpenPrint={() => can('exportPrintReport') && setIsPrintOpen(true)}
+            activeTab={activeTab}
+            isWingView={isWingView}
+            wingSubTab={wingSubTab}
+            unitSubTab={unitSubTab}
+            operator={verifiedOperator}
+            canExportPrint={can('exportPrintReport')}
+            canOpenCloudSync={can('accessSettings') && can('manageCloudAndNotice')}
+            onLogout={handleLogout}
+            onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
+            onOpenCloudSync={() => openSettingsModal('sync')}
+          />
+        )}
+
+        {/* Shared App Notice Banner (managed in Settings -> App Notice) */}
+        {!isQuickEditActive && appNotice.trim() && !isNoticeDismissed && (
+          <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 pt-3">
+            <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-amber-950/35 border border-amber-500/35 text-amber-200 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <Megaphone className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="truncate sm:whitespace-normal font-medium">{appNotice}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNoticeDismissed(true)}
+                aria-label="Dismiss notice"
+                className="text-amber-300/70 hover:text-amber-100 p-0.5 cursor-pointer shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Main Content Area */}
-        <main className="flex-1 w-full">
-          {activeTab === 'Flying Wing' ? (
+        <main className="flex-1 w-full pt-3 sm:pt-4 pb-6">
+          {isWingView ? (
             <>
-              {/* 2 Sub-options ONLY for Flying Wing: 1. Consolidated State, 2. Prepared By */}
-              <div className="w-full max-w-7xl mx-auto px-4 mb-3">
-                <div className="inline-flex items-center gap-1.5 bg-[#0b1424] border border-[#1b2a44] p-1 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => setIsPreparedByOpen(false)}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      !isPreparedByOpen
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5" />
-                    <span>Consolidated State</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsPreparedByOpen(true)}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      isPreparedByOpen
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <UserCheck className="w-3.5 h-3.5" />
-                    <span>Prepared By</span>
-                  </button>
+              {/* Sub-options hidden during isolated Quick Edit Sqn Count page */}
+              {!isQuickEditActive && (
+                <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 mb-3">
+                  <div className="inline-flex flex-wrap items-center gap-1.5 bg-[#0b1424] border border-[#1b2a44] p-1 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWingSubTab('consolidated');
+                        setIsPreparedByOpen(false);
+                      }}
+                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        wingSubTab === 'consolidated' && !isPreparedByOpen
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      <span>Consolidated State</span>
+                    </button>
+                    {can('viewUpdateLog') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsPreparedByOpen(false);
+                          setWingSubTab('log');
+                        }}
+                        className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          wingSubTab === 'log' && !isPreparedByOpen
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <History className="w-3.5 h-3.5" />
+                        <span>Update Log</span>
+                        <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-slate-900/60 text-[10px] text-slate-200 tabular-nums">
+                          {totalDayLogsCount}
+                        </span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <ConsolidatedWingView
-                dayState={dayState}
-                onUpdateSquadronRow={handleUpdateSquadronRow}
-                onSelectUnit={(unitName) => handleTabChange(unitName)}
-                onAddCustomDisposal={handleAddCustomDisposal}
-                onDeleteCustomDisposal={handleDeleteCustomDisposal}
-                onSettingsChanged={() =>
-                  markSettingsChangedForCloud(
-                    dayState.preparedBy,
-                    dayState.savedCustomDisposals ?? loadSavedCustomDisposals()
-                  )
-                }
-              />
+              {wingSubTab === 'log' ? (
+                can('viewUpdateLog') ? (
+                  <StateUpdateLogView
+                    dayState={dayState}
+                    verifiedOperator={verifiedOperator}
+                    onRequestChangeOperator={openOperatorSwitcher}
+                  />
+                ) : (
+                  <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                    <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                      <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                      <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                      <div className="text-xs text-slate-400">
+                        Update Log access is currently disabled for {currentRole}.
+                      </div>
+                    </div>
+                  </div>
+                )
+              ) : can('viewConsolidatedState') ? (
+                <ConsolidatedWingView
+                  dayState={dayState}
+                  activeWing={activeWing}
+                  canQuickEdit={can('editQuickSqnCount')}
+                  onUpdateSquadronRow={handleUpdateSquadronRow}
+                  onSelectUnit={(unitName) => handleTabChange(unitName)}
+                  onAddCustomDisposal={handleAddCustomDisposal}
+                  onDeleteCustomDisposal={handleDeleteCustomDisposal}
+                  onRequireAuth={requireOperatorAuth}
+                  onEditingChange={setIsQuickEditActive}
+                  onSettingsChanged={() =>
+                    markSettingsChangedForCloud(
+                      dayState.preparedBy,
+                      dayState.savedCustomDisposals ?? loadSavedCustomDisposals()
+                    )
+                  }
+                />
+              ) : (
+                <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                  <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                    <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                    <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                    <div className="text-xs text-slate-400">
+                      Consolidated Wing State view is currently disabled for {currentRole}.
+                    </div>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <>
-              {/* Inner Sub-Tabs inside each Squadron/Unit (Night Count State & Nominal Roll) */}
-              <div className="w-full max-w-7xl mx-auto px-4 mb-3">
-                <div className="inline-flex items-center gap-1.5 bg-[#0b1424] border border-[#1b2a44] p-1 rounded-xl">
+              {/* Inner Sub-Tabs inside each Squadron/Unit (Night Count State, Nominal Roll, Update Log) */}
+              <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 mb-3">
+                <div className="inline-flex flex-wrap items-center gap-1.5 bg-[#0b1424] border border-[#1b2a44] p-1 rounded-xl">
                   <button
                     type="button"
                     onClick={() => setUnitSubTab('state')}
                     className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                       unitSubTab === 'state'
-                        ? 'bg-blue-600 text-white shadow-sm'
+                        ? 'bg-emerald-600 text-white shadow-sm'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                     }`}
                   >
@@ -792,44 +1791,174 @@ export default function App() {
                     onClick={() => setUnitSubTab('nominalRoll')}
                     className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                       unitSubTab === 'nominalRoll'
-                        ? 'bg-blue-600 text-white shadow-sm'
+                        ? 'bg-emerald-600 text-white shadow-sm'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                     }`}
                   >
                     <Users className="w-3.5 h-3.5" />
                     <span>Nominal Roll</span>
-                    <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-slate-900/60 text-[10px] text-slate-200">
+                    <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-slate-900/60 text-[10px] text-slate-200 tabular-nums">
                       {activeUnitAirmenCount}
                     </span>
                   </button>
+                  {can('viewUpdateLog') && (
+                    <button
+                      type="button"
+                      onClick={() => setUnitSubTab('log')}
+                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        unitSubTab === 'log'
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <History className="w-3.5 h-3.5" />
+                      <span>Update Log</span>
+                      <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-slate-900/60 text-[10px] text-slate-200 tabular-nums">
+                        {activeUnitLogsCount}
+                      </span>
+                    </button>
+                  )}
                 </div>
               </div>
 
               {unitSubTab === 'state' ? (
-                <UnitStateView
-                  unitName={activeUnitName}
+                can('viewUnitDetails') ? (
+                  <UnitStateView
+                    unitName={activeUnitName}
+                    dayState={dayState}
+                    onRemoveDisposal={handleRemoveDisposal}
+                    onToggleAirmanParade={handleToggleAirmanParade}
+                    onSelectAirmanForDisposal={() => setUnitSubTab('nominalRoll')}
+                    onUpdateRemarks={handleUpdateRemarks}
+                    onCommitRemarks={handleCommitRemarks}
+                    onRequireAuth={requireOperatorAuth}
+                    isOperatorVerified={Boolean(verifiedOperator)}
+                    canEditRemarks={can('editUnitDisposals')}
+                  />
+                ) : (
+                  <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                    <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                      <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                      <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                      <div className="text-xs text-slate-400">
+                        Unit Night Count State view is currently disabled for {currentRole}.
+                      </div>
+                    </div>
+                  </div>
+                )
+              ) : unitSubTab === 'nominalRoll' ? (
+                can('viewUnitDetails') || can('manageNominalRoll') ? (
+                  <NominalRollView
+                    unitName={activeUnitName}
+                    dayState={dayState}
+                    onUpdateAirmanDisposal={handleUpdateAirmanDisposal}
+                    onUpdateAirmanFull={handleUpdateAirmanFull}
+                    onAddAirman={handleAddAirmanToRoster}
+                    onAddAirmenBulk={handleAddAirmenBulk}
+                    onDeleteAirman={handleDeleteAirman}
+                    onDeleteCustomDisposal={handleDeleteCustomDisposal}
+                    onRequireAuth={requireOperatorAuth}
+                    canEditDisposals={can('editUnitDisposals')}
+                    canManageNominalRoll={can('manageNominalRoll')}
+                    canDeleteAirman={can('deleteNominalRollAirman')}
+                  />
+                ) : (
+                  <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                    <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                      <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                      <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                      <div className="text-xs text-slate-400">
+                        Nominal Roll access is currently disabled for {currentRole}.
+                      </div>
+                    </div>
+                  </div>
+                )
+              ) : can('viewUpdateLog') ? (
+                <StateUpdateLogView
                   dayState={dayState}
-                  onRemoveDisposal={handleRemoveDisposal}
-                  onToggleAirmanParade={handleToggleAirmanParade}
-                  onSelectAirmanForDisposal={() => setUnitSubTab('nominalRoll')}
-                  onUpdateRemarks={handleUpdateRemarks}
+                  unitFilter={activeUnitName}
+                  verifiedOperator={verifiedOperator}
+                  onRequestChangeOperator={openOperatorSwitcher}
                 />
               ) : (
-                <NominalRollView
-                  unitName={activeUnitName}
-                  dayState={dayState}
-                  onUpdateAirmanDisposal={handleUpdateAirmanDisposal}
-                  onUpdateAirmanFull={handleUpdateAirmanFull}
-                  onAddAirman={handleAddAirmanToRoster}
-                  onAddAirmenBulk={handleAddAirmenBulk}
-                  onDeleteAirman={handleDeleteAirman}
-                  onDeleteCustomDisposal={handleDeleteCustomDisposal}
-                />
+                <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                  <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                    <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                    <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                    <div className="text-xs text-slate-400">
+                      Update Log access is currently disabled for {currentRole}.
+                    </div>
+                  </div>
+                </div>
               )}
             </>
           )}
         </main>
+
+        {/* Bottom Workspace Footer (Pic 2 Style) */}
+        {!isQuickEditActive && (
+          <footer className="border-t border-[#142036] bg-[#060c17] px-4 sm:px-6 py-2.5 text-[11px] text-slate-400">
+            <div className="w-full max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-1.5">
+              <span className="font-semibold text-slate-300">
+                155 UASU BAF • Night Count State System
+              </span>
+              <span className="text-slate-500">
+                Bangladesh Air Force • Confidential Personnel Night Count Register
+              </span>
+            </div>
+          </footer>
+        )}
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        initialTab={settingsInitialTab}
+        onClose={() => setIsSettingsOpen(false)}
+        operator={verifiedOperator}
+        operatorRole={currentRole}
+        themePref={themePref}
+        onChangeThemePref={handleChangeThemePref}
+        rolePermissions={rolePermissions}
+        onSaveRolePermissions={handleSaveRolePermissions}
+        canManageWings={can('manageWingsAndUnits')}
+        canManageUsers={can('manageUsers')}
+        canManageCloudAndNotice={can('manageCloudAndNotice')}
+        loginHistory={loginHistory}
+        onRefreshLoginHistory={handlePullLatestFromCloud}
+        onClearLoginHistory={handleClearLoginHistory}
+        onSyncNowToCloud={handleSyncNowToCloud}
+        onPullLatestFromCloud={handlePullLatestFromCloud}
+        appNotice={appNotice}
+        onSaveAppNotice={handleSaveAppNotice}
+        onRequireAuth={requireOperatorAuth}
+        dayState={dayState}
+        wings={wings}
+        onAddWing={handleAddWing}
+        onDeleteWing={handleDeleteWing}
+        onAddUnitToWing={handleAddUnitToWing}
+        onDeleteUnitFromWing={handleDeleteUnitFromWing}
+        onOpenUnitNominalRoll={(unitName) => {
+          handleTabChange(unitName);
+          setUnitSubTab('nominalRoll');
+        }}
+        onOpenUnitState={(unitName) => {
+          handleTabChange(unitName);
+          setUnitSubTab('state');
+        }}
+        onAddAirmanFromSettings={handleAddAirmanFromSettings}
+        onDeleteAirmanFromSettings={handleDeleteAirmanByUnit}
+        onUpdateUserProfile={handleUpdateUserProfile}
+      />
+
+      {/* Operator Authentication Modal */}
+      <OperatorAuthModal
+        isOpen={isOperatorAuthOpen}
+        dayState={dayState}
+        initialOperator={verifiedOperator}
+        onVerify={handleOperatorVerified}
+        onCancel={handleOperatorAuthCancel}
+      />
 
       {/* Prepared By Modal */}
       <PreparedByModal
@@ -845,7 +1974,8 @@ export default function App() {
         onClose={() => setIsPrintOpen(false)}
         dayState={dayState}
         activeTab={activeTab}
-        unitSubTab={unitSubTab}
+        activeWing={activeWing}
+        unitSubTab={unitSubTab === 'nominalRoll' ? 'nominalRoll' : 'state'}
       />
 
       <OfflineIndicator />

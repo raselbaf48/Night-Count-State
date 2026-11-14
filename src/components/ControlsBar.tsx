@@ -5,9 +5,13 @@ import {
   ChevronRight,
   Calendar as CalendarIcon,
   Printer,
+  LogOut,
+  LogIn,
+  Menu,
+  Cloud,
 } from 'lucide-react';
-import { FLYING_WING_SQUADRONS } from '../data/initialData';
-import { getWeekdayName } from '../utils/storage';
+import { OperatorProfile } from '../types/nightCount';
+import { formatDateDayMonth, getWeekdayName } from '../utils/storage';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface ControlsBarProps {
@@ -18,7 +22,15 @@ interface ControlsBarProps {
   onDateChange: (iso: string) => void;
   onOpenPrint: () => void;
   activeTab: string;
-  onTabChange: (tab: string) => void;
+  isWingView?: boolean;
+  wingSubTab: 'consolidated' | 'log';
+  unitSubTab: 'state' | 'nominalRoll' | 'log';
+  operator?: OperatorProfile | null;
+  onLogout?: () => void;
+  onOpenMobileMenu: () => void;
+  onOpenCloudSync: () => void;
+  canExportPrint?: boolean;
+  canOpenCloudSync?: boolean;
 }
 
 export const ControlsBar: React.FC<ControlsBarProps> = ({
@@ -29,50 +41,76 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
   onDateChange,
   onOpenPrint,
   activeTab,
-  onTabChange,
+  isWingView = activeTab === 'Flying Wing',
+  wingSubTab,
+  unitSubTab,
+  operator,
+  onLogout,
+  onOpenMobileMenu,
+  onOpenCloudSync,
+  canExportPrint = true,
+  canOpenCloudSync = true,
 }) => {
   const dateInputRef = useRef<HTMLInputElement>(null);
 
-  const handleDatePickerClick = () => {
-    if (dateInputRef.current) {
-      dateInputRef.current.showPicker?.();
-      dateInputRef.current.focus();
+  const handleDatePickerClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const input = dateInputRef.current;
+    if (!input) return;
+    if (e.target !== input) {
+      input.focus();
+    }
+    try {
+      if (window.self === window.top) {
+        input.showPicker?.();
+      }
+    } catch {
+      // Ignore SecurityError when running inside a cross-origin iframe
     }
   };
 
-  const tabs = ['Flying Wing', ...FLYING_WING_SQUADRONS];
   const weekdayName = getWeekdayName(dateIso);
+  const shortDateDisplay = formatDateDayMonth(dateIso) || formattedDate;
+
+  const sectionLabel = isWingView
+    ? wingSubTab === 'log'
+      ? 'State Update Log'
+      : `${activeTab} • Consolidated State`
+    : unitSubTab === 'nominalRoll'
+      ? `${activeTab} • Nominal Roll`
+      : unitSubTab === 'log'
+        ? `${activeTab} • Update Log`
+        : `${activeTab} • Night Count State`;
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 pt-4 sm:pt-5 pb-3">
-      {/* Top Controls Box */}
-      <div className="bg-[#0b1424] border border-[#1b2a44] rounded-xl p-3 sm:p-5 shadow-lg shadow-black/40">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
-          {/* Left Logo & Text */}
-          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            <img
-              src="/air-force-logo.png"
-              alt="Bangladesh Air Force Logo"
-              className="w-14 h-14 sm:w-16 sm:h-16 object-contain shrink-0 drop-shadow-[0_0_2px_rgba(255,255,255,0.4)]"
-            />
+    <header className="w-full bg-[#08101e]/95 border-b border-[#16233b] sticky top-0 z-20 backdrop-blur-md">
+      <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 py-2.5 sm:py-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 sm:gap-3">
+          {/* Left: Mobile Drawer Toggle + Breadcrumb & Active Section Title */}
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={onOpenMobileMenu}
+              aria-label="Open navigation menu"
+              className="lg:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg bg-[#0d192e] hover:bg-[#142542] border border-[#1e3152] text-emerald-400 transition-colors cursor-pointer shrink-0"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+
             <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[11px] sm:text-xs font-semibold text-emerald-400 tracking-wide uppercase">
-                <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-bold text-emerald-400 tracking-wider uppercase">
+                <Shield className="w-3 h-3 text-emerald-400 shrink-0" />
                 <span className="truncate">{activeTab} • DAILY NIGHT COUNT STATE</span>
               </div>
-              <h1 className="text-lg sm:text-2xl font-bold text-white tracking-tight mt-0.5 sm:mt-1 truncate">
-                Night Count State Controls
+              <h1 className="text-base sm:text-xl font-bold text-white tracking-tight truncate">
+                {sectionLabel}
               </h1>
-              <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-                Manage night count date, personnel state and display settings
-              </p>
             </div>
           </div>
 
-          {/* Right Action Tools - Always side by side on Mobile & Desktop */}
-          <div className="flex flex-nowrap items-center justify-between sm:justify-end gap-1.5 sm:gap-3 w-full md:w-auto">
+          {/* Right Action Tools - Wraps cleanly on narrow mobile screens without overflow */}
+          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 w-full md:w-auto min-w-0">
             {/* Date Selector */}
-            <div className="flex items-center bg-[#070e1b] border border-slate-700/80 rounded-lg px-2 sm:px-2.5 py-1 sm:py-1.5 gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-slate-300 shrink-0">
+            <div className="flex items-center bg-[#070e1b] border border-slate-700/80 rounded-lg px-2 sm:px-2.5 py-1 sm:py-1.5 gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-slate-300 max-w-full min-w-0">
               {weekdayName && (
                 <span className="text-emerald-400 font-semibold text-[11px] sm:text-xs pr-1.5 border-r border-slate-700/80 whitespace-nowrap">
                   {weekdayName}
@@ -90,17 +128,19 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
 
               <div
                 onClick={handleDatePickerClick}
-                className="relative flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2.5 py-0.5 bg-[#0e1b30] hover:bg-[#162744] text-slate-100 font-medium rounded cursor-pointer transition-colors border border-slate-700/60 whitespace-nowrap"
+                className="relative flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2.5 py-0.5 bg-[#0e1b30] hover:bg-[#162744] text-slate-100 font-medium rounded cursor-pointer transition-colors border border-slate-700/60 whitespace-nowrap overflow-hidden"
                 title="Click to pick date"
               >
-                <span className="text-[11px] sm:text-xs font-semibold">{formattedDate}</span>
-                <CalendarIcon className="w-3 h-3 text-slate-400 shrink-0" />
+                <span className="text-[11px] sm:text-xs font-semibold pointer-events-none tabular-nums">
+                  {shortDateDisplay}
+                </span>
+                <CalendarIcon className="w-3 h-3 text-slate-400 shrink-0 pointer-events-none" />
                 <input
                   ref={dateInputRef}
                   type="date"
                   value={dateIso}
                   onChange={(e) => e.target.value && onDateChange(e.target.value)}
-                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
                   aria-label="Select date"
                 />
               </div>
@@ -115,41 +155,66 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
               </button>
             </div>
 
-            {/* Colored Official Export / Print Button beside Date */}
-            <button
-              type="button"
-              onClick={onOpenPrint}
-              className="flex items-center justify-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-[11px] sm:text-xs font-semibold rounded-lg border border-blue-400/40 transition-all cursor-pointer shadow-md shadow-blue-900/30 whitespace-nowrap shrink-0"
-            >
-              <Printer className="w-3.5 h-3.5 text-white shrink-0" />
-              <span>Official Export/Print</span>
-            </button>
+            {/* Colored Official Export / Print Button */}
+            {canExportPrint && (
+              <button
+                type="button"
+                onClick={onOpenPrint}
+                className="flex items-center justify-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-[11px] sm:text-xs font-semibold rounded-lg border border-blue-400/40 transition-all cursor-pointer shadow-md shadow-blue-900/30 whitespace-nowrap shrink-0"
+              >
+                <Printer className="w-3.5 h-3.5 text-white shrink-0" />
+                <span>Official Export/Print</span>
+              </button>
+            )}
 
             <PWAInstallButton />
+
+            {/* Cloud Sync Shortcut Button */}
+            {canOpenCloudSync && (
+              <button
+                type="button"
+                onClick={onOpenCloudSync}
+                title="Database Cloud Sync"
+                className="inline-flex items-center justify-center p-1.5 sm:p-2 rounded-lg bg-[#070e1b] hover:bg-[#101c31] border border-slate-700/80 text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer shrink-0"
+              >
+                <Cloud className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {onLogout &&
+              (operator ? (
+                <div className="flex items-center gap-2 pl-2 pr-1 py-1 rounded-lg bg-[#070e1b] border border-slate-700/80 text-[11px] sm:text-xs whitespace-nowrap shrink-0">
+                  <span className="text-slate-300 font-medium">
+                    {operator.rank} {operator.name}
+                    <span className="text-slate-500 ml-1 tabular-nums">· {operator.bdNo}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    title="Logout and switch operator"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-rose-950/80 text-slate-300 hover:text-rose-300 border border-slate-700/80 hover:border-rose-700/60 transition-colors cursor-pointer font-semibold"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 pl-2.5 pr-1 py-1 rounded-lg bg-[#070e1b] border border-slate-700/80 text-[11px] sm:text-xs whitespace-nowrap shrink-0">
+                  <span className="text-slate-400 font-medium">Guest</span>
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    title="Return to Login Portal"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 transition-colors cursor-pointer font-semibold"
+                  >
+                    <LogIn className="w-3 h-3" />
+                    <span>User Login</span>
+                  </button>
+                </div>
+              ))}
           </div>
         </div>
       </div>
-
-      {/* Navigation Tabs below Controls: Flying Wing & All Squadrons/Units */}
-      <div className="flex flex-wrap items-center gap-2 mt-4 select-none">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab;
-          return (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => onTabChange(tab)}
-              className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-sm flex items-center gap-1.5 ${
-                isActive
-                  ? 'bg-[#00c853] text-slate-950 shadow-[#00c853]/20 font-bold'
-                  : 'bg-[#0b172a] text-slate-300 hover:text-white hover:bg-[#132238] border border-slate-800'
-              }`}
-            >
-              <span>{tab}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    </header>
   );
 };
