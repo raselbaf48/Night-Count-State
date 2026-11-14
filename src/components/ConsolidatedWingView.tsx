@@ -1,18 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { DayState, UnitRowState, WingConfig } from '../types/nightCount';
+import React, { useState, useEffect, useRef } from 'react';
+import { DayState, PreparedByInfo, UnitRowState, WingConfig } from '../types/nightCount';
 import {
   calculateUnitSummarizedRow,
   getUnitAirmen,
+  getWingPreparedBy,
   loadSavedCustomDisposals,
   loadHiddenQuickEditDisposals,
   saveHiddenQuickEditDisposals,
 } from '../utils/storage';
 import { createBlankUnitRow, DISPOSAL_OPTIONS } from '../data/initialData';
-import { Edit3, Check, X, Shield, ArrowLeft, Eye, EyeOff, Plus } from 'lucide-react';
+import { Edit3, Check, X, Shield, ArrowLeft, Eye, EyeOff, Plus, RotateCcw } from 'lucide-react';
 
 interface ConsolidatedWingViewProps {
   dayState: DayState;
   activeWing?: WingConfig;
+  preparedBy?: PreparedByInfo;
   onUpdateSquadronRow: (updatedRow: UnitRowState) => void;
   onSelectUnit: (unitName: string) => void;
   onAddCustomDisposal: (customName: string) => void;
@@ -29,6 +31,7 @@ const ALWAYS_VISIBLE_DISPOSALS = new Set(['TDY', 'Leave', 'GD', 'Office Duty']);
 export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   dayState,
   activeWing,
+  preparedBy,
   onUpdateSquadronRow,
   onSelectUnit,
   onAddCustomDisposal,
@@ -38,6 +41,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   onEditingChange,
   canQuickEdit = true,
 }) => {
+  const effectivePreparedBy = preparedBy ?? getWingPreparedBy(activeWing, dayState.preparedBy);
   const [editingSqn, setEditingSqn] = useState<string | null>(null);
   const [editTotalStr, setEditTotalStr] = useState<number>(0);
   const [editCounts, setEditCounts] = useState<Record<string, number>>({});
@@ -61,9 +65,30 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     };
   }, [editingSqn, editingSourceRow, onEditingChange]);
   const [showHiddenDrawer, setShowHiddenDrawer] = useState<boolean>(false);
+  const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
   const [isAddingCustom, setIsAddingCustom] = useState<boolean>(false);
   const [newCustomName, setNewCustomName] = useState<string>('');
   const [newCustomAmount, setNewCustomAmount] = useState<number>(0);
+  const skipNextMouseUpRef = useRef<boolean>(false);
+
+  const handleBoxFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    if (input.value) {
+      try {
+        input.select();
+        skipNextMouseUpRef.current = true;
+      } catch {
+        // ignore browsers restricting select on number inputs
+      }
+    }
+  };
+
+  const handleBoxMouseUp = (e: React.MouseEvent<HTMLInputElement>) => {
+    if (skipNextMouseUpRef.current) {
+      e.preventDefault();
+      skipNextMouseUpRef.current = false;
+    }
+  };
 
   const summarized155 = calculateUnitSummarizedRow(dayState, '155 UASU BAF');
   const rowByUnit = new Map(
@@ -288,6 +313,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     setEditTotalStr(row.totalStr || 0);
     setEditCounts(counts);
     setEditRemarks(row.rmks || '');
+    setShowResetConfirm(false);
     setIsAddingCustom(false);
     setNewCustomName('');
     setNewCustomAmount(0);
@@ -296,7 +322,20 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   const cancelEdit = () => {
     setEditingSqn(null);
     setEditingSourceRow(null);
+    setShowResetConfirm(false);
     setIsAddingCustom(false);
+  };
+
+  const handleConfirmResetDisposals = () => {
+    setEditCounts((prev) => {
+      const resetCounts: Record<string, number> = {};
+      Object.keys(prev).forEach((k) => {
+        resetCounts[k] = 0;
+      });
+      return resetCounts;
+    });
+    setEditRemarks('');
+    setShowResetConfirm(false);
   };
 
   const toggleHideDisposal = (key: string) => {
@@ -494,7 +533,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     );
 
     return (
-      <div className="w-full max-w-2xl mx-auto px-4 pt-5 sm:pt-8 pb-12 text-[12px]">
+      <div className="w-full max-w-2xl mx-auto px-4 pt-5 sm:pt-8 pb-12 text-[12px] animate-tab-enter">
         <form
           onSubmit={saveEdit}
           className="bg-[#0b1424] border border-[#1b2a44] rounded-2xl shadow-2xl overflow-hidden"
@@ -544,25 +583,36 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
             </div>
           </div>
 
-          {/* List Visibility Controls Bar (Top Eye Icon to Hide / Unhide disposals) */}
+          {/* List Visibility Controls Bar (Top Eye Icon & Reset Icon) */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2 bg-[#0a1220] border-b border-slate-800/70 text-[11px]">
             <span className="text-slate-400">
               Showing <strong className="text-slate-200">{visibleItems.length}</strong> of{' '}
               <strong className="text-slate-200">{allListItems.length}</strong> disposals
             </span>
-            <button
-              type="button"
-              onClick={() => setShowHiddenDrawer((prev) => !prev)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded border transition-colors cursor-pointer ${
-                showHiddenDrawer
-                  ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-                  : 'bg-slate-800/80 border-slate-700/70 hover:bg-slate-700 text-slate-200'
-              }`}
-              title="Hide / Unhide disposals"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              {hiddenItems.length > 0 && <span>({hiddenItems.length})</span>}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowHiddenDrawer((prev) => !prev)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded border transition-colors cursor-pointer ${
+                  showHiddenDrawer
+                    ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
+                    : 'bg-slate-800/80 border-slate-700/70 hover:bg-slate-700 text-slate-200'
+                }`}
+                title="Hide / Unhide disposals"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                {hiddenItems.length > 0 && <span>({hiddenItems.length})</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowResetConfirm(true)}
+                className="flex items-center justify-center p-1.5 rounded border bg-rose-950/40 hover:bg-rose-900/80 border-rose-500/40 text-rose-300 transition-colors cursor-pointer"
+                title="Reset disposal counts"
+                aria-label="Reset disposal counts"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Expandable Hide / Unhide Disposals Drawer (Opened via Top Eye Icon) */}
@@ -625,6 +675,8 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                 min="0"
                 value={editTotalStr === 0 ? '' : editTotalStr}
                 placeholder="0"
+                onFocus={handleBoxFocus}
+                onMouseUp={handleBoxMouseUp}
                 onChange={(e) => setEditTotalStr(Math.max(0, parseInt(e.target.value, 10) || 0))}
                 className="w-24 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-center text-xs font-bold text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
               />
@@ -674,6 +726,8 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                     min="0"
                     value={val === 0 ? '' : val}
                     placeholder="0"
+                    onFocus={handleBoxFocus}
+                    onMouseUp={handleBoxMouseUp}
                     onChange={(e) => {
                       const num = Math.max(0, parseInt(e.target.value, 10) || 0);
                       setEditCounts((prev) => ({ ...prev, [item.key]: num }));
@@ -727,6 +781,8 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                     min="0"
                     value={newCustomAmount === 0 ? '' : newCustomAmount}
                     placeholder="0"
+                    onFocus={handleBoxFocus}
+                    onMouseUp={handleBoxMouseUp}
                     onChange={(e) =>
                       setNewCustomAmount(Math.max(0, parseInt(e.target.value, 10) || 0))
                     }
@@ -761,6 +817,8 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
               <input
                 type="text"
                 value={editRemarks}
+                onFocus={handleBoxFocus}
+                onMouseUp={handleBoxMouseUp}
                 onChange={(e) => setEditRemarks(e.target.value)}
                 placeholder="Nil"
                 className="w-48 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-center text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
@@ -786,6 +844,49 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
             </button>
           </div>
         </form>
+
+        {/* Confirmation Popup for Reset Disposal Counts */}
+        {showResetConfirm && (
+          <div
+            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setShowResetConfirm(false)}
+          >
+            <div
+              className="bg-[#0d1728] border border-rose-500/40 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-rose-950/60 border border-rose-500/40 flex items-center justify-center shrink-0">
+                  <RotateCcw className="w-4 h-4 text-rose-400" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-white">Reset Disposal Counts?</h3>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                    Are you sure you want to clear all disposal counts and remarks for{' '}
+                    <span className="font-semibold text-white">{editingSqn}</span> to 0?
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowResetConfirm(false)}
+                  className="px-3.5 py-2 rounded-xl bg-[#14233d] hover:bg-[#1b2e4f] text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmResetDisposals}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors cursor-pointer shadow-sm"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Confirm Reset</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1046,22 +1147,22 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
           </table>
         </div>
 
-        {/* Official Prepared By Signature Block below Flying Wing Consolidated State */}
+        {/* Official Prepared By Signature Block below Wing Consolidated State */}
         <div className="mt-8 pt-2 text-left text-[12px] text-slate-200">
           <div className="text-slate-300 font-normal mb-14">Prepared By</div>
-          {dayState.preparedBy?.name && (
+          {effectivePreparedBy?.name && (
             <div className="font-bold text-slate-100 uppercase tracking-wide leading-snug">
-              {dayState.preparedBy.name}
+              {effectivePreparedBy.name}
             </div>
           )}
-          {dayState.preparedBy?.rank && (
+          {effectivePreparedBy?.rank && (
             <div className="font-bold text-slate-200 uppercase leading-snug">
-              {dayState.preparedBy.rank}
+              {effectivePreparedBy.rank}
             </div>
           )}
-          {dayState.preparedBy?.appointment && (
+          {effectivePreparedBy?.appointment && (
             <div className="text-slate-300 uppercase leading-snug">
-              {dayState.preparedBy.appointment}
+              {effectivePreparedBy.appointment}
             </div>
           )}
         </div>

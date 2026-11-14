@@ -240,136 +240,132 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
           </table>
         </div>
 
-        {/* Nominal Roll Breakdown: On Parade, TDY, and Duty On (12px font size) */}
-        <div className="flex flex-row flex-wrap gap-x-12 sm:gap-x-16 gap-y-6 text-[12px] text-slate-200">
-          {/* Section 1: On Parade */}
-          <div>
-            <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-              ON PARADE
-            </h4>
-
-            {onParadeAirmen.length === 0 ? (
-              <div className="text-slate-500 italic">Nil</div>
-            ) : (
-              <div className="flex flex-row gap-6 sm:gap-10">
-                {/* Sub-Column 1: 1 to 15 */}
-                <div className="space-y-1">
-                  {onParadeAirmen.slice(0, 15).map((airman, idx) => (
-                    <div key={airman.id} className="py-0.5 whitespace-nowrap">
-                      <span className="text-slate-400 font-medium">{idx + 1}. </span>
-                      <span className="text-slate-200 font-medium">
-                        {airman.rank} {airman.name}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Sub-Column 2: 16 onwards */}
-                {onParadeAirmen.length > 15 && (
+        {/* Nominal Roll Breakdown: only render sections that have personnel */}
+        {(onParadeAirmen.length > 0 ||
+          tdyDisposals.length > 0 ||
+          dutyDisposals.length > 0 ||
+          officeDisposals.length > 0 ||
+          separateGroups.some((g) => g.items.length > 0)) && (
+          <div className="flex flex-row flex-wrap gap-x-12 sm:gap-x-16 gap-y-6 text-[12px] text-slate-200">
+            {/* Section 1: On Parade */}
+            {onParadeAirmen.length > 0 && (
+              <div>
+                <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                  ON PARADE
+                </h4>
+                <div className="flex flex-row gap-6 sm:gap-10">
+                  {/* Sub-Column 1: 1 to 15 */}
                   <div className="space-y-1">
-                    {onParadeAirmen.slice(15).map((airman, idx) => (
+                    {onParadeAirmen.slice(0, 15).map((airman, idx) => (
                       <div key={airman.id} className="py-0.5 whitespace-nowrap">
-                        <span className="text-slate-400 font-medium">{idx + 16}. </span>
+                        <span className="text-slate-400 font-medium">{idx + 1}. </span>
                         <span className="text-slate-200 font-medium">
                           {airman.rank} {airman.name}
                         </span>
                       </div>
                     ))}
                   </div>
-                )}
+
+                  {/* Sub-Column 2: 16 onwards */}
+                  {onParadeAirmen.length > 15 && (
+                    <div className="space-y-1">
+                      {onParadeAirmen.slice(15).map((airman, idx) => (
+                        <div key={airman.id} className="py-0.5 whitespace-nowrap">
+                          <span className="text-slate-400 font-medium">{idx + 16}. </span>
+                          <span className="text-slate-200 font-medium">
+                            {airman.rank} {airman.name}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
-          </div>
 
-          {/* Section 2: TDY (Separated from Duty On) */}
-          <div>
-            <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-              TDY
-            </h4>
+            {/* Section 2: TDY (Separated from Duty On) */}
+            {tdyDisposals.length > 0 && (
+              <div>
+                <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                  TDY
+                </h4>
+                <div className="space-y-1">
+                  {tdyDisposals.map((disp, idx) => {
+                    const tdySub = formatTdyDetail(disp.detail || disp.displayCategory);
+                    const showSub = tdySub && tdySub.trim().toUpperCase() !== 'TDY';
+                    return (
+                      <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                        <span className="text-slate-400 font-medium">{idx + 1}. </span>
+                        <span className="text-slate-200 font-medium">
+                          {disp.rank} {disp.name}{showSub ? ` - ${tdySub}` : ''}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-            {tdyDisposals.length === 0 ? (
-              <div className="text-slate-500 italic">Nil</div>
-            ) : (
-              <div className="space-y-1">
-                {tdyDisposals.map((disp, idx) => {
-                  const tdySub = formatTdyDetail(disp.detail || disp.displayCategory);
-                  const showSub = tdySub && tdySub.trim().toUpperCase() !== 'TDY';
-                  return (
+            {/* Section 3: Duty On */}
+            {dutyDisposals.length > 0 && (
+              <div>
+                <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                  DUTY ON
+                </h4>
+                <div className="space-y-1">
+                  {dutyDisposals.map((disp, idx) => (
                     <div key={disp.id} className="py-0.5 whitespace-nowrap">
                       <span className="text-slate-400 font-medium">{idx + 1}. </span>
                       <span className="text-slate-200 font-medium">
-                        {disp.rank} {disp.name}{showSub ? ` - ${tdySub}` : ''}
+                        {disp.rank} {disp.name} - {disp.detail || disp.displayCategory}
                       </span>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
             )}
-          </div>
 
-          {/* Section 3: Duty On */}
-          <div>
-            <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-              DUTY ON
-            </h4>
-
-            {dutyDisposals.length === 0 ? (
-              <div className="text-slate-500 italic">Nil</div>
-            ) : (
-              <div className="space-y-1">
-                {dutyDisposals.map((disp, idx) => (
-                  <div key={disp.id} className="py-0.5 whitespace-nowrap">
-                    <span className="text-slate-400 font-medium">{idx + 1}. </span>
-                    <span className="text-slate-200 font-medium">
-                      {disp.rank} {disp.name} - {disp.detail || disp.displayCategory}
-                    </span>
-                  </div>
-                ))}
+            {/* Section 4: Office (Separated from Duty On) */}
+            {officeDisposals.length > 0 && (
+              <div>
+                <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                  OFFICE
+                </h4>
+                <div className="space-y-1">
+                  {officeDisposals.map((disp, idx) => (
+                    <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                      <span className="text-slate-400 font-medium">{idx + 1}. </span>
+                      <span className="text-slate-200 font-medium">
+                        {disp.rank} {disp.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
-          </div>
 
-          {/* Section 4: Office (Separated from Duty On) */}
-          <div>
-            <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-              OFFICE
-            </h4>
-
-            {officeDisposals.length === 0 ? (
-              <div className="text-slate-500 italic">Nil</div>
-            ) : (
-              <div className="space-y-1">
-                {officeDisposals.map((disp, idx) => (
-                  <div key={disp.id} className="py-0.5 whitespace-nowrap">
-                    <span className="text-slate-400 font-medium">{idx + 1}. </span>
-                    <span className="text-slate-200 font-medium">
-                      {disp.rank} {disp.name}
-                    </span>
+            {/* Separate Individual Disposal Sections (Leave, Course, AWOL, Sick Report, Driving, Custom, etc.) */}
+            {separateGroups
+              .filter((group) => group.items.length > 0)
+              .map((group) => (
+                <div key={`section-${group.name}`}>
+                  <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                    {group.name}
+                  </h4>
+                  <div className="space-y-1">
+                    {group.items.map((disp, idx) => (
+                      <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                        <span className="text-slate-400 font-medium">{idx + 1}. </span>
+                        <span className="text-slate-200 font-medium">
+                          {disp.rank} {disp.name}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+              ))}
           </div>
-
-          {/* Separate Individual Disposal Sections (Leave, Course, AWOL, Sick Report, Driving, Custom, etc.) */}
-          {separateGroups.map((group) => (
-            <div key={`section-${group.name}`}>
-              <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-                {group.name}
-              </h4>
-              <div className="space-y-1">
-                {group.items.map((disp, idx) => (
-                  <div key={disp.id} className="py-0.5 whitespace-nowrap">
-                    <span className="text-slate-400 font-medium">{idx + 1}. </span>
-                    <span className="text-slate-200 font-medium">
-                      {disp.rank} {disp.name}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        )}
       </div>
     </div>
   );

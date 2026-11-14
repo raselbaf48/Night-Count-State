@@ -7,6 +7,7 @@ import {
   getFlyingWingSummary,
   getUnitAirmen,
   getUnitRemarks,
+  getWingPreparedBy,
 } from '../utils/storage';
 import { exportReportToDocx } from '../utils/exportDocx';
 
@@ -34,6 +35,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   const wingShortName = activeWing?.shortName || 'FLG WG';
   const wingDisplayName = activeWing?.name || 'Flying Wing';
   const unitName = isFlyingWing ? wingShortName : activeTab;
+  const effectivePreparedBy = getWingPreparedBy(activeWing, dayState.preparedBy);
 
   const displayVal = (val: number | string) => {
     if (typeof val === 'number') {
@@ -154,6 +156,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
       unitAirmen,
       unitDisposalMap,
       formatTdyDetail,
+      preparedBy: effectivePreparedBy,
     });
   };
 
@@ -391,19 +394,19 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                 {/* Official Prepared By Signature Block */}
                 <div className="mt-8 pt-2 text-left text-[12px] text-slate-200">
                   <div className="text-slate-300 font-normal mb-14">Prepared By</div>
-                  {dayState.preparedBy?.name && (
+                  {effectivePreparedBy?.name && (
                     <div className="font-bold text-slate-100 uppercase tracking-wide leading-snug">
-                      {dayState.preparedBy.name}
+                      {effectivePreparedBy.name}
                     </div>
                   )}
-                  {dayState.preparedBy?.rank && (
+                  {effectivePreparedBy?.rank && (
                     <div className="font-bold text-slate-200 uppercase leading-snug">
-                      {dayState.preparedBy.rank}
+                      {effectivePreparedBy.rank}
                     </div>
                   )}
-                  {dayState.preparedBy?.appointment && (
+                  {effectivePreparedBy?.appointment && (
                     <div className="text-slate-300 uppercase leading-snug">
-                      {dayState.preparedBy.appointment}
+                      {effectivePreparedBy.appointment}
                     </div>
                   )}
                 </div>
@@ -594,125 +597,125 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                   </table>
                 </div>
 
-                {/* Breakdown Lists: On Parade, TDY, Duty On, Office, Custom */}
-                <div className="flex flex-row flex-wrap gap-x-12 sm:gap-x-16 gap-y-6 text-[12px] text-slate-200">
-                  <div>
-                    <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-                      ON PARADE
-                    </h4>
-                    {onParadeAirmen.length === 0 ? (
-                      <div className="text-slate-500 italic">Nil</div>
-                    ) : (
-                      <div className="flex flex-row gap-6 sm:gap-10">
-                        <div className="space-y-1">
-                          {onParadeAirmen.slice(0, 15).map((airman, idx) => (
-                            <div key={airman.id} className="py-0.5 whitespace-nowrap">
-                              <span className="text-slate-400 font-medium">{idx + 1}. </span>
-                              <span className="text-slate-200 font-medium">
-                                {airman.rank} {airman.name}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                        {onParadeAirmen.length > 15 && (
+                {/* Breakdown Lists: only render sections with entries */}
+                {(onParadeAirmen.length > 0 ||
+                  tdyDisposals.length > 0 ||
+                  dutyDisposals.length > 0 ||
+                  officeDisposals.length > 0 ||
+                  separateGroups.some((g) => g.items.length > 0)) && (
+                  <div className="flex flex-row flex-wrap gap-x-12 sm:gap-x-16 gap-y-6 text-[12px] text-slate-200">
+                    {onParadeAirmen.length > 0 && (
+                      <div>
+                        <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                          ON PARADE
+                        </h4>
+                        <div className="flex flex-row gap-6 sm:gap-10">
                           <div className="space-y-1">
-                            {onParadeAirmen.slice(15).map((airman, idx) => (
+                            {onParadeAirmen.slice(0, 15).map((airman, idx) => (
                               <div key={airman.id} className="py-0.5 whitespace-nowrap">
-                                <span className="text-slate-400 font-medium">{idx + 16}. </span>
+                                <span className="text-slate-400 font-medium">{idx + 1}. </span>
                                 <span className="text-slate-200 font-medium">
                                   {airman.rank} {airman.name}
                                 </span>
                               </div>
                             ))}
                           </div>
-                        )}
+                          {onParadeAirmen.length > 15 && (
+                            <div className="space-y-1">
+                              {onParadeAirmen.slice(15).map((airman, idx) => (
+                                <div key={airman.id} className="py-0.5 whitespace-nowrap">
+                                  <span className="text-slate-400 font-medium">{idx + 16}. </span>
+                                  <span className="text-slate-200 font-medium">
+                                    {airman.rank} {airman.name}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
-                  </div>
 
-                  <div>
-                    <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-                      TDY
-                    </h4>
-                    {tdyDisposals.length === 0 ? (
-                      <div className="text-slate-500 italic">Nil</div>
-                    ) : (
-                      <div className="space-y-1">
-                        {tdyDisposals.map((disp, idx) => {
-                          const tdySub = formatTdyDetail(disp.detail || disp.displayCategory);
-                          const showSub = tdySub && tdySub.trim().toUpperCase() !== 'TDY';
-                          return (
+                    {tdyDisposals.length > 0 && (
+                      <div>
+                        <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                          TDY
+                        </h4>
+                        <div className="space-y-1">
+                          {tdyDisposals.map((disp, idx) => {
+                            const tdySub = formatTdyDetail(disp.detail || disp.displayCategory);
+                            const showSub = tdySub && tdySub.trim().toUpperCase() !== 'TDY';
+                            return (
+                              <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                                <span className="text-slate-400 font-medium">{idx + 1}. </span>
+                                <span className="text-slate-200 font-medium">
+                                  {disp.rank} {disp.name}
+                                  {showSub ? ` - ${tdySub}` : ''}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {dutyDisposals.length > 0 && (
+                      <div>
+                        <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                          DUTY ON
+                        </h4>
+                        <div className="space-y-1">
+                          {dutyDisposals.map((disp, idx) => (
+                            <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                              <span className="text-slate-400 font-medium">{idx + 1}. </span>
+                              <span className="text-slate-200 font-medium">
+                                {disp.rank} {disp.name} - {disp.detail || disp.displayCategory}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {officeDisposals.length > 0 && (
+                      <div>
+                        <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                          OFFICE
+                        </h4>
+                        <div className="space-y-1">
+                          {officeDisposals.map((disp, idx) => (
                             <div key={disp.id} className="py-0.5 whitespace-nowrap">
                               <span className="text-slate-400 font-medium">{idx + 1}. </span>
                               <span className="text-slate-200 font-medium">
                                 {disp.rank} {disp.name}
-                                {showSub ? ` - ${tdySub}` : ''}
                               </span>
                             </div>
-                          );
-                        })}
+                          ))}
+                        </div>
                       </div>
                     )}
-                  </div>
 
-                  <div>
-                    <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-                      DUTY ON
-                    </h4>
-                    {dutyDisposals.length === 0 ? (
-                      <div className="text-slate-500 italic">Nil</div>
-                    ) : (
-                      <div className="space-y-1">
-                        {dutyDisposals.map((disp, idx) => (
-                          <div key={disp.id} className="py-0.5 whitespace-nowrap">
-                            <span className="text-slate-400 font-medium">{idx + 1}. </span>
-                            <span className="text-slate-200 font-medium">
-                              {disp.rank} {disp.name} - {disp.detail || disp.displayCategory}
-                            </span>
+                    {separateGroups
+                      .filter((group) => group.items.length > 0)
+                      .map((group) => (
+                        <div key={`print-section-${group.name}`}>
+                          <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
+                            {group.name}
+                          </h4>
+                          <div className="space-y-1">
+                            {group.items.map((disp, idx) => (
+                              <div key={disp.id} className="py-0.5 whitespace-nowrap">
+                                <span className="text-slate-400 font-medium">{idx + 1}. </span>
+                                <span className="text-slate-200 font-medium">
+                                  {disp.rank} {disp.name}
+                                </span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        </div>
+                      ))}
                   </div>
-
-                  <div>
-                    <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-                      OFFICE
-                    </h4>
-                    {officeDisposals.length === 0 ? (
-                      <div className="text-slate-500 italic">Nil</div>
-                    ) : (
-                      <div className="space-y-1">
-                        {officeDisposals.map((disp, idx) => (
-                          <div key={disp.id} className="py-0.5 whitespace-nowrap">
-                            <span className="text-slate-400 font-medium">{idx + 1}. </span>
-                            <span className="text-slate-200 font-medium">
-                              {disp.rank} {disp.name}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {separateGroups.map((group) => (
-                    <div key={`print-section-${group.name}`}>
-                      <h4 className="font-bold text-[12px] text-slate-100 uppercase underline decoration-slate-400 underline-offset-4 mb-2.5">
-                        {group.name}
-                      </h4>
-                      <div className="space-y-1">
-                        {group.items.map((disp, idx) => (
-                          <div key={disp.id} className="py-0.5 whitespace-nowrap">
-                            <span className="text-slate-400 font-medium">{idx + 1}. </span>
-                            <span className="text-slate-200 font-medium">
-                              {disp.rank} {disp.name}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                )}
               </>
             )}
           </div>

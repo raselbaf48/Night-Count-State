@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import {
   Shield,
   ChevronLeft,
@@ -19,7 +19,7 @@ interface ControlsBarProps {
   formattedDate: string;
   onPrevDate: () => void;
   onNextDate: () => void;
-  onDateChange: (iso: string) => void;
+  onOpenCalendar: () => void;
   onOpenPrint: () => void;
   activeTab: string;
   isWingView?: boolean;
@@ -38,7 +38,7 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
   formattedDate,
   onPrevDate,
   onNextDate,
-  onDateChange,
+  onOpenCalendar,
   onOpenPrint,
   activeTab,
   isWingView = activeTab === 'Flying Wing',
@@ -51,22 +51,6 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
   canExportPrint = true,
   canOpenCloudSync = true,
 }) => {
-  const dateInputRef = useRef<HTMLInputElement>(null);
-
-  const handleDatePickerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const input = dateInputRef.current;
-    if (!input) return;
-    if (e.target !== input) {
-      input.focus();
-    }
-    try {
-      if (window.self === window.top) {
-        input.showPicker?.();
-      }
-    } catch {
-      // Ignore SecurityError when running inside a cross-origin iframe
-    }
-  };
 
   const weekdayName = getWeekdayName(dateIso);
   const shortDateDisplay = formatDateDayMonth(dateIso) || formattedDate;
@@ -109,63 +93,62 @@ export const ControlsBar: React.FC<ControlsBarProps> = ({
 
           {/* Right Action Tools - Wraps cleanly on narrow mobile screens without overflow */}
           <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 w-full md:w-auto min-w-0">
-            {/* Date Selector */}
-            <div className="flex items-center bg-[#070e1b] border border-slate-700/80 rounded-lg px-2 sm:px-2.5 py-1 sm:py-1.5 gap-1 sm:gap-1.5 text-[11px] sm:text-xs text-slate-300 max-w-full min-w-0">
-              {weekdayName && (
-                <span className="text-emerald-400 font-semibold text-[11px] sm:text-xs pr-1.5 border-r border-slate-700/80 whitespace-nowrap">
-                  {weekdayName}
-                </span>
-              )}
-              <span className="text-slate-400 font-medium text-[10px] sm:text-[11px]">Date:</span>
-              <button
-                type="button"
-                onClick={onPrevDate}
-                className="p-0.5 sm:p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
-                title="Previous Day"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
+            {/* Date & Bar (stacked) paired with Official Export/Print of matching height */}
+            <div className="flex items-stretch gap-2 w-full sm:w-auto min-w-0">
+              {/* Date Selector: Date row on top, Bar (Weekday) below */}
+              <div className="flex flex-col items-center justify-center bg-[#070e1b] border border-slate-700/80 rounded-lg px-2 sm:px-2.5 py-1.5 gap-1 text-[11px] sm:text-xs text-slate-300 shrink-0">
+                <div className="flex items-center gap-1 sm:gap-1.5">
+                  <span className="text-slate-400 font-medium text-[10px] sm:text-[11px]">Date:</span>
+                  <button
+                    type="button"
+                    onClick={onPrevDate}
+                    className="date-arrow-3d-btn w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-md transition-all duration-150 cursor-pointer shrink-0"
+                    title="Previous Day"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5 stroke-[2.5]" />
+                  </button>
 
-              <div
-                onClick={handleDatePickerClick}
-                className="relative flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2.5 py-0.5 bg-[#0e1b30] hover:bg-[#162744] text-slate-100 font-medium rounded cursor-pointer transition-colors border border-slate-700/60 whitespace-nowrap overflow-hidden"
-                title="Click to pick date"
-              >
-                <span className="text-[11px] sm:text-xs font-semibold pointer-events-none tabular-nums">
-                  {shortDateDisplay}
-                </span>
-                <CalendarIcon className="w-3 h-3 text-slate-400 shrink-0 pointer-events-none" />
-                <input
-                  ref={dateInputRef}
-                  type="date"
-                  value={dateIso}
-                  onChange={(e) => e.target.value && onDateChange(e.target.value)}
-                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
-                  aria-label="Select date"
-                />
+                  <button
+                    type="button"
+                    onClick={onOpenCalendar}
+                    className="relative flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 bg-[#0e1b30] hover:bg-[#162744] text-slate-100 font-medium rounded-md cursor-pointer transition-colors border border-slate-700/60 whitespace-nowrap"
+                    title="Click to select date"
+                  >
+                    <span className="text-[11px] sm:text-xs font-semibold tabular-nums">
+                      {shortDateDisplay}
+                    </span>
+                    <CalendarIcon className="w-3 h-3 text-slate-400 shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onNextDate}
+                    className="date-arrow-3d-btn w-6 h-6 sm:w-7 sm:h-7 inline-flex items-center justify-center rounded-md transition-all duration-150 cursor-pointer shrink-0"
+                    title="Next Day"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                  </button>
+                </div>
+
+                {weekdayName && (
+                  <div className="w-full text-center pt-1.5 border-t border-slate-700/80 text-emerald-400 font-extrabold text-sm sm:text-base tracking-wide whitespace-nowrap leading-tight">
+                    {weekdayName}
+                  </div>
+                )}
               </div>
 
-              <button
-                type="button"
-                onClick={onNextDate}
-                className="p-0.5 sm:p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
-                title="Next Day"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
+              {/* Colored Official Export / Print Button matching Date + Bar box height */}
+              {canExportPrint && (
+                <button
+                  type="button"
+                  onClick={onOpenPrint}
+                  className="flex-1 sm:flex-initial self-stretch flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-[11px] sm:text-xs font-semibold rounded-lg border border-blue-400/40 transition-all cursor-pointer shadow-md shadow-blue-900/30 text-center leading-tight min-w-0 sm:whitespace-nowrap"
+                >
+                  <Printer className="w-3.5 h-3.5 text-white shrink-0" />
+                  <span>Official Export/Print</span>
+                </button>
+              )}
             </div>
-
-            {/* Colored Official Export / Print Button */}
-            {canExportPrint && (
-              <button
-                type="button"
-                onClick={onOpenPrint}
-                className="flex items-center justify-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-[11px] sm:text-xs font-semibold rounded-lg border border-blue-400/40 transition-all cursor-pointer shadow-md shadow-blue-900/30 whitespace-nowrap shrink-0"
-              >
-                <Printer className="w-3.5 h-3.5 text-white shrink-0" />
-                <span>Official Export/Print</span>
-              </button>
-            )}
 
             <PWAInstallButton />
 

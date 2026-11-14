@@ -1,32 +1,68 @@
 import React, { useMemo, useState } from 'react';
-import { History, Search, ShieldCheck, UserCog } from 'lucide-react';
-import { DayState, OperatorProfile } from '../types/nightCount';
+import { History, Search } from 'lucide-react';
+import { DayState, StateUpdateLogEntry, WingConfig } from '../types/nightCount';
 
 interface StateUpdateLogViewProps {
   dayState: DayState;
+  wings?: WingConfig[];
+  activeWing?: WingConfig;
   unitFilter?: string;
   lockedUnit?: string;
-  verifiedOperator: OperatorProfile | null;
-  onRequestChangeOperator: () => void;
 }
 
 export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
   dayState,
+  wings = [],
+  activeWing,
   unitFilter,
   lockedUnit,
-  verifiedOperator,
-  onRequestChangeOperator,
 }) => {
   const effectiveUnitFilter = lockedUnit || unitFilter;
   const [searchQuery, setSearchQuery] = useState('');
   const [scope, setScope] = useState<'all' | 'unit'>(effectiveUnitFilter ? 'unit' : 'all');
 
+  const getWingForEntry = (unitName: string): WingConfig | undefined => {
+    const clean = (unitName || '').trim().toLowerCase();
+    if (!clean) return activeWing;
+    return (
+      wings.find(
+        (w) =>
+          w.name.toLowerCase() === clean ||
+          w.shortName.toLowerCase() === clean ||
+          w.units.some((u) => u.toLowerCase() === clean)
+      ) || undefined
+    );
+  };
+
+  const getSectionDisplayLabel = (entry: StateUpdateLogEntry): string => {
+    if (
+      entry.area === 'Quick Edit Sqn Count' ||
+      entry.area.startsWith('Consolidated State')
+    ) {
+      const matchedWing = getWingForEntry(entry.unitName) || activeWing;
+      const short = matchedWing?.shortName || 'FLG WG';
+      return `Consolidated State : ${short}`;
+    }
+    return entry.area;
+  };
+
   const baseLogs = useMemo(() => {
     const raw = Array.isArray(dayState.updateLogs) ? [...dayState.updateLogs] : [];
-    return lockedUnit
-      ? raw.filter((entry) => entry.unitName.toLowerCase() === lockedUnit.toLowerCase())
-      : raw;
-  }, [dayState.updateLogs, lockedUnit]);
+    return raw.filter((entry) => {
+      if (lockedUnit) {
+        return entry.unitName.toLowerCase() === lockedUnit.toLowerCase();
+      }
+      if (activeWing) {
+        const entryUnitLower = (entry.unitName || '').trim().toLowerCase();
+        const belongsToActiveWing =
+          entryUnitLower === activeWing.name.toLowerCase() ||
+          entryUnitLower === activeWing.shortName.toLowerCase() ||
+          activeWing.units.some((u) => u.toLowerCase() === entryUnitLower);
+        return belongsToActiveWing;
+      }
+      return true;
+    });
+  }, [dayState.updateLogs, lockedUnit, activeWing]);
 
   const logs = useMemo(() => {
     const raw = [...baseLogs];
@@ -34,15 +70,21 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
     raw.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
 
     return raw.filter((entry) => {
-      if ((lockedUnit || scope === 'unit') && effectiveUnitFilter && entry.unitName.toLowerCase() !== effectiveUnitFilter.toLowerCase()) {
+      if (
+        (lockedUnit || scope === 'unit') &&
+        effectiveUnitFilter &&
+        entry.unitName.toLowerCase() !== effectiveUnitFilter.toLowerCase()
+      ) {
         return false;
       }
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const op = entry.operator;
+        const sectionLabel = getSectionDisplayLabel(entry);
         const haystack = [
           entry.unitName,
           entry.area,
+          sectionLabel,
           entry.action,
           entry.displayTime,
           op?.bdNo,
@@ -58,7 +100,7 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
       }
       return true;
     });
-  }, [baseLogs, scope, effectiveUnitFilter, lockedUnit, searchQuery]);
+  }, [baseLogs, scope, effectiveUnitFilter, lockedUnit, searchQuery, wings, activeWing]);
 
   const totalDayLogs = baseLogs.length;
 
@@ -76,38 +118,10 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
                 State Update Log — {dayState.formattedDisplayDate}
               </h2>
               <p className="text-[11px] text-slate-400">
-                Record of who updated Quick Edit Sqn Count, Nominal Roll &amp; State today ({totalDayLogs}{' '}
+                Record of who updated Consolidated State, Nominal Roll &amp; State today ({totalDayLogs}{' '}
                 {totalDayLogs === 1 ? 'update' : 'updates'})
               </p>
             </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {verifiedOperator ? (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#070e1b] border border-emerald-500/30 text-xs">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span className="text-slate-200 font-semibold">
-                  {verifiedOperator.rank} {verifiedOperator.name}
-                </span>
-                <span className="text-slate-400">({verifiedOperator.bdNo})</span>
-                <button
-                  type="button"
-                  onClick={onRequestChangeOperator}
-                  className="ml-1 text-[11px] text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
-                >
-                  Change
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={onRequestChangeOperator}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0e1b30] hover:bg-[#162744] text-slate-200 border border-slate-700 text-xs font-semibold cursor-pointer transition-colors"
-              >
-                <UserCog className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Verify Operator</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -139,12 +153,12 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                All Units ({totalDayLogs})
+                {activeWing ? `All ${activeWing.shortName}` : 'All Units'} ({totalDayLogs})
               </button>
             </div>
           ) : (
             <span className="text-xs text-slate-400 font-medium">
-              Showing all updates for {dayState.formattedDisplayDate}
+              Showing {activeWing ? `${activeWing.name} ` : 'all '}updates for {dayState.formattedDisplayDate}
             </span>
           )}
 
@@ -165,7 +179,12 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
           {logs.length === 0 ? (
             <div className="px-6 py-12 text-center text-slate-400 text-xs">
               No state updates recorded for {dayState.formattedDisplayDate}
-              {scope === 'unit' && unitFilter ? ` in ${unitFilter}` : ''}.
+              {scope === 'unit' && unitFilter
+                ? ` in ${unitFilter}`
+                : activeWing
+                  ? ` in ${activeWing.name}`
+                  : ''}
+              .
             </div>
           ) : (
             <table className="w-full text-left border-collapse text-xs">
@@ -203,7 +222,7 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
                       <span className="inline-block px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[11px] text-slate-200 font-medium">
-                        {entry.area}
+                        {getSectionDisplayLabel(entry)}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-slate-200 min-w-[220px]">{entry.action}</td>

@@ -26,6 +26,7 @@ import {
   Sun,
   Moon,
   Lock,
+  Edit3,
 } from 'lucide-react';
 import {
   Airman,
@@ -85,12 +86,15 @@ interface SettingsModalProps {
   onRequireAuth: (onSuccess: () => void) => void;
   dayState: DayState;
   wings: WingConfig[];
-  onAddWing: (name: string, shortName: string) => { ok: boolean; error?: string };
-  onDeleteWing: (wingId: string) => void;
   onAddUnitToWing: (wingId: string, unitName: string) => { ok: boolean; error?: string };
+  onUpdateUnitConfig: (
+    oldWingId: string,
+    oldUnitName: string,
+    newWingId: string,
+    newUnitName: string
+  ) => { ok: boolean; error?: string };
   onDeleteUnitFromWing: (wingId: string, unitName: string) => void;
   onOpenUnitNominalRoll: (unitName: string) => void;
-  onOpenUnitState: (unitName: string) => void;
   onAddAirmanFromSettings: (airman: Omit<Airman, 'id'>) => void;
   onDeleteAirmanFromSettings: (unitName: string, airmanId: string) => void;
   onUpdateUserProfile: (
@@ -198,8 +202,8 @@ const PERMISSION_GROUPS: {
       },
       {
         key: 'manageWingsAndUnits',
-        label: 'Manage Wings & Squadrons/Units',
-        desc: 'Add or remove Wings and Squadrons/Units in Settings',
+        label: 'Manage Squadrons / Units',
+        desc: 'Add, edit office Name/Wing, or remove Squadrons/Units in Settings',
       },
       {
         key: 'manageUsers',
@@ -238,18 +242,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onRequireAuth,
   dayState,
   wings,
-  onAddWing,
-  onDeleteWing,
   onAddUnitToWing,
+  onUpdateUnitConfig,
   onDeleteUnitFromWing,
   onOpenUnitNominalRoll,
-  onOpenUnitState,
   onAddAirmanFromSettings,
   onDeleteAirmanFromSettings,
   onUpdateUserProfile,
   restrictedUnitName,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab);
+  const [isMobileDetailOpen, setIsMobileDetailOpen] = useState<boolean>(initialTab !== 'theme');
   const [historyQuery, setHistoryQuery] = useState('');
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [isRefreshingHistory, setIsRefreshingHistory] = useState(false);
@@ -296,11 +299,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [permFeedback, setPermFeedback] = useState<string | null>(null);
 
   // Wings & Units state
-  const [activeWingActionForm, setActiveWingActionForm] = useState<'none' | 'addWing' | 'addUnit'>(
-    'none'
-  );
-  const [wingNameInput, setWingNameInput] = useState('');
-  const [wingShortInput, setWingShortInput] = useState('');
+  const [isWingManageMode, setIsWingManageMode] = useState(false);
+  const [showAddUnitForm, setShowAddUnitForm] = useState(false);
+  const [editingUnitRef, setEditingUnitRef] = useState<{
+    wingId: string;
+    unitName: string;
+  } | null>(null);
+  const [editUnitNameInput, setEditUnitNameInput] = useState('');
+  const [editUnitWingId, setEditUnitWingId] = useState<string>(wings[0]?.id || 'flying-wing');
   const [targetWingId, setTargetWingId] = useState<string>(wings[0]?.id || 'flying-wing');
   const [selectedWingViewId, setSelectedWingViewId] = useState<string>(
     wings[0]?.id || 'flying-wing'
@@ -332,6 +338,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           ? 'theme'
           : initialTab;
       setActiveTab(nextInitialTab);
+      setIsMobileDetailOpen(initialTab !== 'theme');
       setNoticeDraft(appNotice);
       setConfirmClearHistory(false);
       setConfirmDeleteUserId(null);
@@ -339,7 +346,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setIsEditingProfile(false);
       setProfileFeedback(null);
       setSyncFeedback(null);
-      setActiveWingActionForm('none');
+      setIsWingManageMode(false);
+      setShowAddUnitForm(false);
+      setEditingUnitRef(null);
       setWingFeedback(null);
       setUserActionFeedback(null);
       setNoticeSavedFeedback(false);
@@ -438,26 +447,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleAddWingSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanName = wingNameInput.trim();
-    if (!cleanName) {
-      setWingFeedback({ type: 'err', text: 'Please enter a Wing name.' });
-      return;
-    }
-    onRequireAuth(() => {
-      const res = onAddWing(cleanName, wingShortInput.trim());
-      if (!res.ok) {
-        setWingFeedback({ type: 'err', text: res.error || 'Could not add Wing.' });
-        return;
-      }
-      setWingFeedback({ type: 'ok', text: `Added Wing "${cleanName}" and synced to Cloud.` });
-      setWingNameInput('');
-      setWingShortInput('');
-      setActiveWingActionForm('none');
-    });
-  };
-
   const handleAddUnitSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanUnit = unitNameInput.trim();
@@ -478,7 +467,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
       setUnitNameInput('');
       setSelectedWingViewId(targetWingId);
-      setActiveWingActionForm('none');
+      setShowAddUnitForm(false);
+    });
+  };
+
+  const handleSaveEditUnitSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUnitRef) return;
+    const cleanName = editUnitNameInput.trim();
+    if (!cleanName) {
+      setWingFeedback({ type: 'err', text: 'Please enter a Squadron / Unit name.' });
+      return;
+    }
+    onRequireAuth(() => {
+      const res = onUpdateUnitConfig(
+        editingUnitRef.wingId,
+        editingUnitRef.unitName,
+        editUnitWingId,
+        cleanName
+      );
+      if (!res.ok) {
+        setWingFeedback({ type: 'err', text: res.error || 'Could not update Sqn/Unit.' });
+        return;
+      }
+      const targetWingName = wings.find((w) => w.id === editUnitWingId)?.name || 'Wing';
+      setWingFeedback({
+        type: 'ok',
+        text: `Updated "${cleanName}" under ${targetWingName} and synced to Cloud.`,
+      });
+      setSelectedWingViewId(editUnitWingId);
+      setEditingUnitRef(null);
     });
   };
 
@@ -697,16 +715,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-2.5 sm:p-4"
+      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-2.5 sm:p-4 animate-backdrop-fade"
       onClick={onClose}
     >
       <div
-        className="bg-[#0d1728] border border-[#1f2f4d] rounded-2xl w-full max-w-5xl h-[90vh] max-h-[700px] flex flex-col sm:flex-row overflow-hidden shadow-2xl shadow-black/70"
+        className="bg-[#0d1728] border border-[#1f2f4d] rounded-2xl w-full max-w-5xl h-[90vh] max-h-[700px] flex flex-col sm:flex-row overflow-hidden shadow-2xl shadow-black/70 animate-modal-pop"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Left Navigation Column */}
-        <aside className="w-full sm:w-56 bg-[#09111f] border-b sm:border-b-0 sm:border-r border-[#1a2944] flex flex-col shrink-0">
-          <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#152238]">
+        {/* Left Navigation Column (On mobile: vertical full menu list first; hidden when a sub-page is open) */}
+        <aside
+          className={`${
+            isMobileDetailOpen ? 'hidden sm:flex' : 'flex flex-1 sm:flex-initial animate-slide-left'
+          } w-full sm:w-56 bg-[#09111f] sm:border-r border-[#1a2944] flex-col shrink-0 overflow-hidden`}
+        >
+          <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#152238] shrink-0">
             <div className="flex items-center gap-2">
               <Settings className="w-4 h-4 text-emerald-400" />
               <span className="text-sm font-bold text-white tracking-tight">Settings</span>
@@ -714,14 +736,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="sm:hidden p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+              className="sm:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
               aria-label="Close Settings"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="flex sm:flex-col gap-1.5 p-2.5 overflow-x-auto sm:overflow-y-auto">
+          <div className="flex-1 flex flex-col gap-2 sm:gap-1.5 p-3 sm:p-2.5 overflow-y-auto">
             {visibleNavItems.map((item) => {
               const Icon = item.icon;
               const isSelected = resolvedActiveTab === item.id;
@@ -731,28 +753,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   type="button"
                   onClick={() => {
                     setActiveTab(item.id);
+                    setIsMobileDetailOpen(true);
                     if (item.id !== 'users') {
                       setSelectedUserRef(null);
                       setIsEditingProfile(false);
                     }
+                    if (item.id !== 'wings') {
+                      setIsWingManageMode(false);
+                      setShowAddUnitForm(false);
+                      setEditingUnitRef(null);
+                    }
                   }}
-                  className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 sm:w-full ${
+                  className={`w-full flex items-center justify-between gap-2.5 px-3.5 sm:px-3 py-3 sm:py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
                     isSelected
-                      ? 'bg-[#161f3d] text-indigo-300 border border-indigo-500/45 shadow-sm'
-                      : 'text-slate-300 hover:text-white hover:bg-[#111d33] border border-transparent'
+                      ? 'bg-[#101c31] border-[#1d2e4c] text-slate-200 hover:border-emerald-500/45 sm:bg-[#161f3d] sm:text-indigo-300 sm:border-indigo-500/45 sm:shadow-sm'
+                      : 'bg-[#101c31] border-[#1d2e4c] text-slate-200 hover:text-white hover:border-emerald-500/45 sm:bg-transparent sm:border-transparent sm:text-slate-300 sm:hover:bg-[#111d33]'
                   }`}
                 >
-                  <span className="flex items-center gap-2.5 min-w-0">
-                    <Icon
-                      className={`w-4 h-4 shrink-0 ${
-                        isSelected ? 'text-indigo-400' : 'text-slate-400'
+                  <span className="flex items-center gap-3 sm:gap-2.5 min-w-0">
+                    <span
+                      className={`p-1.5 sm:p-0 rounded-lg bg-[#09111f] sm:bg-transparent border border-[#1e3150] sm:border-0 shrink-0 ${
+                        isSelected ? 'sm:text-indigo-400 text-emerald-400' : 'text-slate-400'
                       }`}
-                    />
+                    >
+                      <Icon className="w-4 h-4 shrink-0" />
+                    </span>
                     <span className="truncate">{item.label}</span>
                   </span>
                   <ChevronRight
-                    className={`hidden sm:block w-3.5 h-3.5 shrink-0 ${
-                      isSelected ? 'text-indigo-400' : 'text-slate-500'
+                    className={`w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0 ${
+                      isSelected ? 'text-slate-400 sm:text-indigo-400' : 'text-slate-500'
                     }`}
                   />
                 </button>
@@ -761,23 +791,80 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </aside>
 
-        {/* Right Content Column */}
-        <section className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#18263f] shrink-0">
-            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              {activeNav.label}
-            </h2>
-            <button
-              type="button"
-              onClick={onClose}
-              className="hidden sm:inline-flex p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors cursor-pointer"
-              aria-label="Close Settings"
-            >
-              <X className="w-4 h-4" />
-            </button>
+        {/* Right Content Column (On mobile: visible ONLY after selecting an option, with Back button) */}
+        <section
+          className={`${
+            isMobileDetailOpen ? 'flex animate-slide-right' : 'hidden sm:flex'
+          } flex-1 flex-col min-w-0 overflow-hidden`}
+        >
+          <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3.5 border-b border-[#18263f] shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileDetailOpen(false);
+                  setIsWingManageMode(false);
+                  setShowAddUnitForm(false);
+                  setEditingUnitRef(null);
+                }}
+                className="sm:hidden inline-flex items-center justify-center p-1.5 -ml-1 rounded-lg bg-[#101c31] border border-[#1d2e4c] text-slate-300 hover:text-white transition-colors cursor-pointer shrink-0"
+                aria-label="Back to Settings Menu"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <h2 className="text-base sm:text-lg font-bold text-white tracking-tight truncate">
+                {activeNav.label}
+              </h2>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {resolvedActiveTab === 'wings' && canEditWings && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWingFeedback(null);
+                    setIsWingManageMode((prev) => {
+                      if (prev) {
+                        setShowAddUnitForm(false);
+                        setEditingUnitRef(null);
+                      }
+                      return !prev;
+                    });
+                  }}
+                  title={
+                    isWingManageMode
+                      ? 'Turn off Sqn / Unit Manage Mode'
+                      : 'Manage Squadrons / Units (Add / Edit / Remove)'
+                  }
+                  aria-label="Toggle Squadron and Unit management"
+                  aria-pressed={isWingManageMode}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                    isWingManageMode
+                      ? 'bg-[#072a1d] border-emerald-500 text-emerald-300 shadow-sm'
+                      : 'bg-[#101c31] border-[#1d2e4c] text-slate-300 hover:text-white hover:border-emerald-500/50'
+                  }`}
+                >
+                  <Settings
+                    className={`w-4 h-4 transition-transform duration-300 ${
+                      isWingManageMode ? 'rotate-90 text-emerald-400' : ''
+                    }`}
+                  />
+                  <span className="hidden sm:inline">
+                    {isWingManageMode ? 'Manage On' : 'Manage'}
+                  </span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors cursor-pointer"
+                aria-label="Close Settings"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+          <div key={resolvedActiveTab} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 animate-tab-enter">
             {/* TAB: THEME & APPEARANCE */}
             {resolvedActiveTab === 'theme' && (
               <div className="space-y-4">
@@ -827,7 +914,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {resolvedActiveTab === 'wings' && (() => {
               const selectedWing =
                 wings.find((w) => w.id === selectedWingViewId) || wings[0] || null;
-              const isSelectedDefaultWing = selectedWing?.id === 'flying-wing';
+              const showWingManageControls = canEditWings && isWingManageMode;
 
               return (
                 <div className="space-y-4">
@@ -848,110 +935,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   )}
 
-                  {/* Separate Action Option Buttons for Add Wing / Add Sqn-Unit */}
-                  {canEditWings && (
+                  {/* Add Sqn / Unit Action (Only visible when Gear Icon Manage Mode is ON) */}
+                  {showWingManageControls && (
                     <div className="space-y-3">
-                      <div className="flex flex-wrap items-center gap-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-emerald-300">
+                          Manage Mode Active — Add, rename, change Wing, or remove Squadrons / Units
+                        </span>
                         <button
                           type="button"
                           onClick={() => {
                             setWingFeedback(null);
-                            setActiveWingActionForm((prev) =>
-                              prev === 'addWing' ? 'none' : 'addWing'
-                            );
-                          }}
-                          className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                            activeWingActionForm === 'addWing'
-                              ? 'bg-[#072a1d] border-emerald-500 text-emerald-300 shadow-sm'
-                              : 'bg-[#101c31] border-[#1d2e4c] text-slate-200 hover:border-emerald-500/50 hover:text-emerald-300'
-                          }`}
-                        >
-                          <Shield className="w-4 h-4 text-emerald-400" />
-                          <span>Add Wing</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setWingFeedback(null);
+                            setEditingUnitRef(null);
                             if (selectedWing) {
                               setTargetWingId(selectedWing.id);
                             }
-                            setActiveWingActionForm((prev) =>
-                              prev === 'addUnit' ? 'none' : 'addUnit'
-                            );
+                            setShowAddUnitForm((prev) => !prev);
                           }}
-                          className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                            activeWingActionForm === 'addUnit'
+                          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                            showAddUnitForm
                               ? 'bg-[#161f3d] border-indigo-500 text-indigo-300 shadow-sm'
                               : 'bg-[#101c31] border-[#1d2e4c] text-slate-200 hover:border-indigo-500/50 hover:text-sky-300'
                           }`}
                         >
-                          <Building2 className="w-4 h-4 text-sky-400" />
+                          <Plus className="w-3.5 h-3.5 text-sky-400" />
                           <span>Add Sqn / Unit</span>
                         </button>
                       </div>
 
-                      {activeWingActionForm === 'addWing' && (
-                        <form
-                          onSubmit={handleAddWingSubmit}
-                          className="bg-[#101c31] border border-emerald-500/40 rounded-xl p-4 space-y-3"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 text-xs font-bold text-white">
-                              <Shield className="w-4 h-4 text-emerald-400" />
-                              <span>Add New Wing</span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setActiveWingActionForm('none')}
-                              className="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer"
-                              aria-label="Close Add Wing form"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                            <input
-                              type="text"
-                              value={wingNameInput}
-                              onChange={(e) => setWingNameInput(e.target.value)}
-                              placeholder="Wing Name (e.g. Maintenance Wing)"
-                              autoFocus
-                              className="sm:col-span-2 bg-[#09111f] border border-[#1e3150] focus:border-emerald-500/60 rounded-lg px-3 py-2 text-xs text-white placeholder:text-slate-500 outline-none"
-                            />
-                            <input
-                              type="text"
-                              value={wingShortInput}
-                              onChange={(e) => setWingShortInput(e.target.value)}
-                              placeholder="Short (e.g. MT WG)"
-                              maxLength={24}
-                              className="bg-[#09111f] border border-[#1e3150] focus:border-emerald-500/60 rounded-lg px-3 py-2 text-xs text-white placeholder:text-slate-500 uppercase outline-none"
-                            />
-                          </div>
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setActiveWingActionForm('none')}
-                              className="px-3 py-1.5 rounded-lg bg-[#14233d] hover:bg-[#1b2e4f] text-slate-300 text-xs font-semibold cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="submit"
-                              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Save Wing</span>
-                            </button>
-                          </div>
-                        </form>
-                      )}
-
-                      {activeWingActionForm === 'addUnit' && (
+                      {showAddUnitForm && (
                         <form
                           onSubmit={handleAddUnitSubmit}
-                          className="bg-[#101c31] border border-indigo-500/40 rounded-xl p-4 space-y-3"
+                          className="bg-[#101c31] border border-indigo-500/40 rounded-xl p-4 space-y-3 animate-tab-enter"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 text-xs font-bold text-white">
@@ -960,7 +975,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             </div>
                             <button
                               type="button"
-                              onClick={() => setActiveWingActionForm('none')}
+                              onClick={() => setShowAddUnitForm(false)}
                               className="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer"
                               aria-label="Close Add Sqn/Unit form"
                             >
@@ -976,7 +991,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             >
                               {wings.map((w) => (
                                 <option key={w.id} value={w.id}>
-                                  {w.name} ({w.shortName})
+                                  {w.name}
                                 </option>
                               ))}
                             </select>
@@ -992,7 +1007,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
-                              onClick={() => setActiveWingActionForm('none')}
+                              onClick={() => setShowAddUnitForm(false)}
                               className="px-3 py-1.5 rounded-lg bg-[#14233d] hover:bg-[#1b2e4f] text-slate-300 text-xs font-semibold cursor-pointer"
                             >
                               Cancel
@@ -1003,6 +1018,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             >
                               <Plus className="w-3.5 h-3.5" />
                               <span>Save Sqn / Unit</span>
+                            </button>
+                          </div>
+                        </form>
+                      )}
+
+                      {editingUnitRef && (
+                        <form
+                          onSubmit={handleSaveEditUnitSubmit}
+                          className="bg-[#101c31] border border-emerald-500/45 rounded-xl p-4 space-y-3 animate-tab-enter"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-xs font-bold text-white min-w-0">
+                              <Edit3 className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <span className="truncate">
+                                Edit Sqn / Unit ({editingUnitRef.unitName})
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setEditingUnitRef(null)}
+                              className="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer shrink-0"
+                              aria-label="Close Edit Sqn/Unit form"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            <input
+                              type="text"
+                              value={editUnitNameInput}
+                              onChange={(e) => setEditUnitNameInput(e.target.value)}
+                              placeholder="Sqn / Unit Name"
+                              autoFocus
+                              className="sm:col-span-2 bg-[#09111f] border border-[#1e3150] focus:border-emerald-500/60 rounded-lg px-3 py-2 text-xs text-white placeholder:text-slate-500 outline-none"
+                            />
+                            <select
+                              value={editUnitWingId}
+                              onChange={(e) => setEditUnitWingId(e.target.value)}
+                              aria-label="Select Wing"
+                              className="bg-[#09111f] border border-[#1e3150] focus:border-emerald-500/60 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                            >
+                              {wings.map((w) => (
+                                <option key={w.id} value={w.id}>
+                                  {w.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditingUnitRef(null)}
+                              className="px-3 py-1.5 rounded-lg bg-[#14233d] hover:bg-[#1b2e4f] text-slate-300 text-xs font-semibold cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              <span>Save Changes</span>
                             </button>
                           </div>
                         </form>
@@ -1018,14 +1095,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <span>Select Wing ({wings.length})</span>
                       </div>
                       <span className="text-[11px] text-slate-400">
-                        {canEditWings
-                          ? 'Click a Wing tab to view its Squadrons / Units below'
-                          : 'View Only • Click a Wing to view your Squadrons / Units'}
+                        {showWingManageControls
+                          ? 'Click any Sqn / Unit below to change its Name or Wing'
+                          : 'View Only • Click a Wing to view its Squadrons / Units'}
                       </span>
                     </div>
 
-                    {/* Horizontal Side-by-Side Wing Tabs */}
-                    <div className="flex flex-wrap items-center gap-2">
+                    {/* 2x2 Grid on Mobile (opore 2 ta niche 2 ta), Horizontal wrap on larger screens */}
+                    <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2">
                       {wings.map((wing) => {
                         const isActiveWing = selectedWing?.id === wing.id;
                         return (
@@ -1038,28 +1115,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 setTargetWingId(wing.id);
                               }
                             }}
-                            className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                            className={`w-full sm:w-auto flex items-center justify-between gap-1.5 px-2.5 sm:px-3 py-2.5 sm:py-2 rounded-xl border text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
                               isActiveWing
                                 ? 'bg-[#072a1d] border-emerald-500/70 text-emerald-300 shadow-sm'
                                 : 'bg-[#09111f] border-[#1e3150] text-slate-300 hover:text-white hover:border-[#2e456e]'
                             }`}
                           >
-                            <Shield
-                              className={`w-3.5 h-3.5 shrink-0 ${
-                                isActiveWing ? 'text-emerald-400' : 'text-slate-400'
-                              }`}
-                            />
-                            <span className="truncate">{wing.name}</span>
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                isActiveWing
-                                  ? 'bg-emerald-500/20 text-emerald-300'
-                                  : 'bg-[#182742] text-slate-300'
-                              }`}
-                            >
-                              {wing.shortName}
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <Shield
+                                className={`w-3.5 h-3.5 shrink-0 ${
+                                  isActiveWing ? 'text-emerald-400' : 'text-slate-400'
+                                }`}
+                              />
+                              <span className="truncate">{wing.name}</span>
                             </span>
-                            <span className="text-[11px] text-slate-400 tabular-nums">
+                            <span className="text-[10px] sm:text-[11px] text-slate-400 tabular-nums shrink-0">
                               ({wing.units.length})
                             </span>
                           </button>
@@ -1069,33 +1139,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     {/* Selected Wing's Squadrons / Units Below */}
                     {selectedWing && (
-                      <div className="border-t border-[#182844] pt-4 space-y-3">
+                      <div
+                        key={selectedWing.id}
+                        className="border-t border-[#182844] pt-4 space-y-3 animate-tab-enter"
+                      >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex items-center gap-2 min-w-0">
                             <Building2 className="w-4 h-4 text-sky-400 shrink-0" />
                             <span className="text-xs sm:text-sm font-bold text-white truncate">
                               {selectedWing.name}
                             </span>
-                            <span className="px-2 py-0.5 rounded bg-[#072a1d] border border-emerald-500/35 text-[10px] font-bold text-emerald-300">
-                              {selectedWing.shortName}
-                            </span>
-                            <span className="text-[11px] text-slate-400 tabular-nums">
-                              {selectedWing.units.length}{' '}
-                              {selectedWing.units.length === 1 ? 'Squadron / Unit' : 'Squadrons / Units'}
-                            </span>
                           </div>
-
-                          {!isSelectedDefaultWing && canEditWings && (
-                            <button
-                              type="button"
-                              onClick={() => onRequireAuth(() => onDeleteWing(selectedWing.id))}
-                              title={`Remove ${selectedWing.name}`}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-950/40 hover:bg-rose-950/70 text-rose-300 border border-rose-700/40 text-[11px] font-semibold cursor-pointer shrink-0"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                              <span>Remove Wing</span>
-                            </button>
-                          )}
+                          <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
+                            {selectedWing.units.length}{' '}
+                            {selectedWing.units.length === 1 ? 'Squadron / Unit' : 'Squadrons / Units'}
+                          </span>
                         </div>
 
                         {selectedWing.units.length === 0 ? (
@@ -1106,30 +1164,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                             {selectedWing.units.map((unitName) => {
                               const isCore = CORE_UNITS_SET.has(unitName.toLowerCase());
+                              const isBeingEdited =
+                                editingUnitRef?.wingId === selectedWing.id &&
+                                editingUnitRef?.unitName.toLowerCase() === unitName.toLowerCase();
                               return (
                                 <div
                                   key={`${selectedWing.id}-${unitName}`}
-                                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#09111f] border border-[#1e3150] hover:border-emerald-500/45 transition-colors"
+                                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border transition-colors ${
+                                    isBeingEdited
+                                      ? 'bg-[#072a1d] border-emerald-500 text-emerald-200'
+                                      : 'bg-[#09111f] border-[#1e3150]'
+                                  }`}
                                 >
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      onOpenUnitState(unitName);
-                                      onClose();
-                                    }}
-                                    className="flex-1 flex items-center gap-2 min-w-0 text-left text-xs font-semibold text-slate-200 hover:text-emerald-300 transition-colors cursor-pointer"
-                                    title={`Open ${unitName}`}
-                                  >
-                                    <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                                    <span className="truncate">{unitName}</span>
-                                  </button>
-                                  {!isCore && canEditWings && (
+                                  {showWingManageControls ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setWingFeedback(null);
+                                        setShowAddUnitForm(false);
+                                        setEditingUnitRef({
+                                          wingId: selectedWing.id,
+                                          unitName,
+                                        });
+                                        setEditUnitNameInput(unitName);
+                                        setEditUnitWingId(selectedWing.id);
+                                      }}
+                                      className="flex-1 flex items-center gap-2 min-w-0 text-left text-xs font-semibold text-slate-200 hover:text-emerald-300 transition-colors cursor-pointer"
+                                      title={`Edit ${unitName} (Name / Wing)`}
+                                    >
+                                      <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                      <span className="truncate">{unitName}</span>
+                                      <Edit3 className="w-3 h-3 text-emerald-400 shrink-0 ml-auto" />
+                                    </button>
+                                  ) : (
+                                    <div className="flex-1 flex items-center gap-2 min-w-0 text-left text-xs font-semibold text-slate-200 select-none">
+                                      <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                      <span className="truncate">{unitName}</span>
+                                    </div>
+                                  )}
+                                  {!isCore && showWingManageControls && (
                                     <button
                                       type="button"
                                       onClick={() =>
-                                        onRequireAuth(() =>
-                                          onDeleteUnitFromWing(selectedWing.id, unitName)
-                                        )
+                                        onRequireAuth(() => {
+                                          if (isBeingEdited) {
+                                            setEditingUnitRef(null);
+                                          }
+                                          onDeleteUnitFromWing(selectedWing.id, unitName);
+                                        })
                                       }
                                       title={`Remove ${unitName}`}
                                       className="p-0.5 rounded text-slate-500 hover:text-rose-400 transition-colors cursor-pointer shrink-0"

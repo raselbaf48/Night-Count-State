@@ -41,7 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   dayState,
   operator,
   operatorRole = 'USER',
-  brandTitle = '155 UASU BAF',
+  brandTitle = 'BAF BASE ZHR',
   canAccessSettings = true,
   isCollapsed,
   isMobileOpen,
@@ -150,7 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           {(overviewOpen || compact) && (
-            <div className="mt-1 space-y-1">
+            <div className="mt-1.5 space-y-1.5">
               {wings.map((wing) => {
                 const isWingSelected = activeTab === wing.name;
                 return (
@@ -159,29 +159,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     type="button"
                     onClick={() => handleNavClick(() => onSelectWing(wing))}
                     title={`${wing.name} (Consolidated State)`}
-                    className={`w-full flex items-center justify-between gap-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    className={`w-full flex items-center justify-between gap-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border ${
                       compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5'
                     } ${
                       isWingSelected
-                        ? 'bg-[#00b853] text-slate-950 font-bold shadow-md shadow-emerald-950/60'
-                        : 'text-emerald-100/85 hover:text-white hover:bg-[#0a3c2a] border border-transparent hover:border-[#14553e]/60'
+                        ? 'sidebar-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-300/70 text-slate-950 font-bold shadow-md shadow-emerald-950/60'
+                        : 'sidebar-box-btn bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] hover:from-[#105c41] hover:via-[#0b4430] hover:to-[#083626] border-[#175e45] hover:border-emerald-400/50 text-emerald-50 hover:text-white shadow-sm'
                     }`}
                   >
                     <span className="flex items-center gap-2.5 min-w-0">
                       <Shield className="w-4 h-4 shrink-0" />
                       {!compact && <span className="truncate">{wing.name}</span>}
                     </span>
-                    {!compact && wings.length > 1 && (
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
-                          isWingSelected
-                            ? 'bg-slate-950/20 text-slate-950'
-                            : 'bg-[#093d2b] text-emerald-300 border border-[#14553e]'
-                        }`}
-                      >
-                        {wing.shortName}
-                      </span>
-                    )}
                   </button>
                 );
               })}
@@ -209,9 +198,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           {(squadronsOpen || compact) && (
-            <div className="mt-1 space-y-2.5">
+            <div className="mt-1.5 space-y-2.5">
               {wings.map((wing) => (
-                <div key={`units-grp-${wing.id}`} className="space-y-1">
+                <div key={`units-grp-${wing.id}`} className="space-y-1.5">
                   {!compact && wings.length > 1 && (
                     <div className="px-2.5 pt-1 text-[9px] font-bold tracking-wider uppercase text-amber-400/80">
                       {wing.name}
@@ -233,12 +222,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           type="button"
                           onClick={() => handleNavClick(() => onSelectUnit(unitName, wing.id))}
                           title={unitName}
-                          className={`w-full flex items-center justify-between gap-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          className={`w-full flex items-center justify-between gap-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border ${
                             compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2'
                           } ${
                             isActive
-                              ? 'bg-[#00b853] text-slate-950 font-bold shadow-md shadow-emerald-950/60'
-                              : 'text-emerald-100/85 hover:text-white hover:bg-[#0a3c2a] border border-transparent hover:border-[#14553e]/60'
+                              ? 'sidebar-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-300/70 text-slate-950 font-bold shadow-md shadow-emerald-950/60'
+                              : 'sidebar-box-btn bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] hover:from-[#105c41] hover:via-[#0b4430] hover:to-[#083626] border-[#175e45] hover:border-emerald-400/50 text-emerald-50 hover:text-white shadow-sm'
                           }`}
                         >
                           <span className="flex items-center gap-2.5 min-w-0">
@@ -270,7 +259,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Bottom Operator & Settings Footer */}
       <div className="border-t border-[#0d3d2c] px-2.5 py-3 space-y-2 shrink-0 bg-[#041d15]">
         {!compact && (
-          <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-[#072b1f] border border-[#114a36]">
+          <div className="sidebar-operator-card flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] border border-[#175e45] shadow-sm">
             <div className="min-w-0">
               {operator ? (
                 <>
@@ -307,12 +296,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             type="button"
             onClick={() => handleNavClick(onOpenSettings)}
             title="Settings"
-            className={`w-full flex items-center gap-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            className={`w-full flex items-center gap-2.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border ${
               compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5'
             } ${
               isSettingsOpen
-                ? 'bg-[#00b853] text-slate-950 font-bold'
-                : 'text-emerald-100/90 hover:text-white bg-[#072b1f] hover:bg-[#0b3f2d] border border-[#114a36]'
+                ? 'sidebar-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-300/70 text-slate-950 font-bold shadow-md shadow-emerald-950/60'
+                : 'sidebar-box-btn bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] hover:from-[#105c41] hover:via-[#0b4430] hover:to-[#083626] border-[#175e45] hover:border-emerald-400/50 text-emerald-50 hover:text-white shadow-sm'
             }`}
           >
             <Settings className="w-4 h-4 shrink-0" />
@@ -332,27 +321,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      {/* Desktop Sticky Sidebar */}
+      {/* Desktop Sticky Sidebar with Smooth Width Transition */}
       <aside
-        className={`sidebar-emerald hidden lg:block shrink-0 sticky top-0 h-screen transition-all duration-200 z-30 ${
+        className={`sidebar-emerald hidden lg:block shrink-0 sticky top-0 h-screen transition-[width] duration-300 ease-out overflow-hidden z-30 ${
           isCollapsed ? 'w-[72px]' : 'w-64'
         }`}
       >
         {renderSidebarBody(isCollapsed)}
       </aside>
 
-      {/* Mobile Slide-Over Drawer */}
-      {isMobileOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden flex">
-          <div
-            className="fixed inset-0 bg-black/70 backdrop-blur-sm"
-            onClick={onCloseMobile}
-          />
-          <aside className="sidebar-emerald relative z-10 w-72 max-w-[85vw] h-full shadow-2xl">
-            {renderSidebarBody(false)}
-          </aside>
-        </div>
-      )}
+      {/* Mobile Slide-Over Drawer with Visible Open & Close Transition */}
+      <div
+        aria-hidden={!isMobileOpen}
+        className={`fixed inset-0 z-50 lg:hidden flex transition-[visibility] duration-300 ${
+          isMobileOpen ? 'visible pointer-events-auto' : 'invisible pointer-events-none'
+        }`}
+      >
+        <div
+          className={`fixed inset-0 bg-black/70 backdrop-blur-sm transition-opacity duration-300 ease-out ${
+            isMobileOpen ? 'opacity-100' : 'opacity-0'
+          }`}
+          onClick={onCloseMobile}
+        />
+        <aside
+          className={`sidebar-emerald relative z-10 w-72 max-w-[85vw] h-full shadow-2xl transform transition-transform duration-300 ease-out ${
+            isMobileOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          {renderSidebarBody(false)}
+        </aside>
+      </div>
     </>
   );
 };

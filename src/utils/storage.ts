@@ -321,6 +321,23 @@ export const DEFAULT_WINGS: WingConfig[] = [
   },
 ];
 
+function sanitizeWingPreparedBy(raw: unknown): PreparedByInfo | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const src = raw as Partial<PreparedByInfo>;
+  const clamp = (val: unknown, maxLen: number): string => {
+    const str = typeof val === 'string' ? val : val == null ? '' : String(val);
+    return str.length > maxLen ? str.slice(0, maxLen) : str;
+  };
+  return {
+    name: clamp(src.name, 100),
+    rank: clamp(src.rank, 40),
+    trade: clamp(src.trade, 80),
+    bdNo: clamp(src.bdNo, 20),
+    appointment: clamp(src.appointment, 100),
+    signatureDate: clamp(src.signatureDate, 40),
+  };
+}
+
 export function sanitizeWingsConfig(raw: unknown): WingConfig[] {
   const defaultWing = DEFAULT_WINGS[0];
   if (!Array.isArray(raw) || raw.length === 0) {
@@ -374,9 +391,15 @@ export function sanitizeWingsConfig(raw: unknown): WingConfig[] {
       }
     }
 
+    const cleanPreparedBy = sanitizeWingPreparedBy(obj.preparedBy);
+
     seenWingIds.add(id);
     seenWingNames.add(nameKey);
-    result.push({ id, name: rawName, shortName, units: cleanUnits });
+    result.push(
+      cleanPreparedBy
+        ? { id, name: rawName, shortName, units: cleanUnits, preparedBy: cleanPreparedBy }
+        : { id, name: rawName, shortName, units: cleanUnits }
+    );
     if (result.length >= 30) break;
   }
 
@@ -858,6 +881,19 @@ export function savePreparedByStorage(info: PreparedByInfo): void {
   } catch {
     // ignore storage errors
   }
+}
+
+export function getWingPreparedBy(
+  wing: WingConfig | undefined,
+  fallbackPreparedBy?: PreparedByInfo
+): PreparedByInfo {
+  if (wing?.preparedBy) {
+    return wing.preparedBy;
+  }
+  if (!wing || wing.id === 'flying-wing') {
+    return fallbackPreparedBy || loadSavedPreparedBy() || { ...INITIAL_PREPARED_BY };
+  }
+  return { ...INITIAL_PREPARED_BY };
 }
 
 export function loadHiddenQuickEditDisposals(): string[] {
@@ -1695,18 +1731,29 @@ export interface UiPrefs {
   unitSubTab: 'state' | 'nominalRoll';
 }
 
+export function getTodayDateIso(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export function loadUiPrefs(): UiPrefs {
+  const todayIso = getTodayDateIso();
   try {
     const raw = localStorage.getItem(UI_PREFS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      return {
-        dateIso: typeof parsed.dateIso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dateIso)
-          ? parsed.dateIso
-          : '2026-11-11',
-        activeTab: typeof parsed.activeTab === 'string' && parsed.activeTab
+      const savedTab =
+        typeof parsed.activeTab === 'string' &&
+        parsed.activeTab.trim() &&
+        parsed.activeTab !== 'Dashboard'
           ? parsed.activeTab
-          : '155 UASU BAF',
+          : 'Flying Wing';
+      return {
+        dateIso: todayIso,
+        activeTab: savedTab,
         unitSubTab: parsed.unitSubTab === 'nominalRoll' ? 'nominalRoll' : 'state',
       };
     }
@@ -1714,8 +1761,8 @@ export function loadUiPrefs(): UiPrefs {
     // ignore
   }
   return {
-    dateIso: '2026-11-11',
-    activeTab: '155 UASU BAF',
+    dateIso: todayIso,
+    activeTab: 'Flying Wing',
     unitSubTab: 'state',
   };
 }

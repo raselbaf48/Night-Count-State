@@ -143,7 +143,13 @@ export interface StateUpdateLogEntry {
   timestamp: string; // ISO string
   displayTime: string; // e.g. 08:52 PM
   date: string; // YYYY-MM-DD
-  area: 'Quick Edit Sqn Count' | 'Nominal Roll' | 'Unit State' | 'Custom Disposal' | 'Prepared By';
+  area:
+    | 'Quick Edit Sqn Count'
+    | `Consolidated State : ${string}`
+    | 'Nominal Roll'
+    | 'Unit State'
+    | 'Custom Disposal'
+    | 'Prepared By';
   unitName: string;
   action: string;
   operator: OperatorProfile;
@@ -166,6 +172,7 @@ export interface WingConfig {
   name: string;
   shortName: string;
   units: string[];
+  preparedBy?: PreparedByInfo;
 }
 
 export interface DayState {

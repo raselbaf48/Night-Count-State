@@ -18,7 +18,7 @@ import {
   WidthType,
   convertMillimetersToTwip,
 } from 'docx';
-import { Airman, DayState, DisposalRecord } from '../types/nightCount';
+import { Airman, DayState, DisposalRecord, PreparedByInfo } from '../types/nightCount';
 
 const FONT_FAMILY = 'Arial';
 
@@ -178,6 +178,7 @@ export interface ExportDocxParams {
   unitAirmen: Airman[];
   unitDisposalMap: Map<string, string>;
   formatTdyDetail: (detail: string) => string;
+  preparedBy?: PreparedByInfo;
 }
 
 export async function exportReportToDocx(params: ExportDocxParams): Promise<void> {
@@ -200,7 +201,9 @@ export async function exportReportToDocx(params: ExportDocxParams): Promise<void
     unitAirmen,
     unitDisposalMap,
     formatTdyDetail,
+    preparedBy,
   } = params;
+  const effectivePreparedBy = preparedBy ?? dayState.preparedBy;
 
   const children: (Paragraph | Table)[] = [];
   let filePrefix = `NT_Count_State_${unitName.replace(/\s+/g, '_')}`;
@@ -443,7 +446,7 @@ export async function exportReportToDocx(params: ExportDocxParams): Promise<void
         alignment: AlignmentType.LEFT,
         spacing: { before: 0, after: 20 },
         children: [
-          makeRun((dayState.preparedBy?.name || '').toUpperCase(), {
+          makeRun((effectivePreparedBy?.name || '').toUpperCase(), {
             bold: true,
             sizePt: 10,
           }),
@@ -453,7 +456,7 @@ export async function exportReportToDocx(params: ExportDocxParams): Promise<void
         alignment: AlignmentType.LEFT,
         spacing: { before: 0, after: 20 },
         children: [
-          makeRun((dayState.preparedBy?.rank || '').toUpperCase(), {
+          makeRun((effectivePreparedBy?.rank || '').toUpperCase(), {
             bold: true,
             sizePt: 9.5,
           }),
@@ -463,7 +466,7 @@ export async function exportReportToDocx(params: ExportDocxParams): Promise<void
         alignment: AlignmentType.LEFT,
         spacing: { before: 0, after: 0 },
         children: [
-          makeRun((dayState.preparedBy?.appointment || '').toUpperCase(), {
+          makeRun((effectivePreparedBy?.appointment || '').toUpperCase(), {
             bold: false,
             sizePt: 9.5,
           }),
@@ -714,23 +717,25 @@ export async function exportReportToDocx(params: ExportDocxParams): Promise<void
         title: g.name.toUpperCase(),
         lines: g.items.map((d) => `${d.rank} ${d.name}`),
       })),
-    ];
+    ].filter((sec) => sec.lines.length > 0);
 
-    const breakdownColWidth = Math.floor(landscapeTableWidth / breakdownSections.length);
-    children.push(
-      new Table({
-        width: { size: landscapeTableWidth, type: WidthType.DXA },
-        layout: TableLayoutType.FIXED,
-        columnWidths: breakdownSections.map(() => breakdownColWidth),
-        rows: [
-          new TableRow({
-            children: breakdownSections.map((sec) =>
-              makeBreakdownCell(sec.title, sec.lines, breakdownColWidth)
-            ),
-          }),
-        ],
-      })
-    );
+    if (breakdownSections.length > 0) {
+      const breakdownColWidth = Math.floor(landscapeTableWidth / breakdownSections.length);
+      children.push(
+        new Table({
+          width: { size: landscapeTableWidth, type: WidthType.DXA },
+          layout: TableLayoutType.FIXED,
+          columnWidths: breakdownSections.map(() => breakdownColWidth),
+          rows: [
+            new TableRow({
+              children: breakdownSections.map((sec) =>
+                makeBreakdownCell(sec.title, sec.lines, breakdownColWidth)
+              ),
+            }),
+          ],
+        })
+      );
+    }
   }
 
   const doc = new Document({

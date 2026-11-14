@@ -15,6 +15,7 @@ import { PrintReportModal } from './components/PrintReportModal';
 import { OperatorAuthModal } from './components/OperatorAuthModal';
 import { StateUpdateLogView } from './components/StateUpdateLogView';
 import { LoginPortalView, SignUpPayload } from './components/LoginPortalView';
+import { DatePickerModal } from './components/DatePickerModal';
 import {
   DayState,
   Airman,
@@ -40,10 +41,12 @@ import {
   syncConsolidated155Row,
   getUnitAirmen,
   setUnitAirmen,
+  getUnitRemarks,
   setUnitRemarks,
   loadUiPrefs,
   saveUiPrefs,
   savePreparedByStorage,
+  getWingPreparedBy,
   loadHiddenQuickEditDisposals,
   saveHiddenQuickEditDisposals,
   normalizeDayState,
@@ -113,6 +116,7 @@ export default function App() {
   // Modals state
   const [isPreparedByOpen, setIsPreparedByOpen] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
   // Operator Authentication, Guest session, Sidebar & Settings state
   const [verifiedOperator, setVerifiedOperator] = useState<OperatorProfile | null>(() =>
@@ -123,7 +127,14 @@ export default function App() {
   const [loginHistory, setLoginHistory] = useState<LoginHistoryEntry[]>(() => loadLoginHistory());
   const [appNotice, setAppNotice] = useState<string>(() => loadAppNotice());
   const [wings, setWings] = useState<WingConfig[]>(() => loadWingsConfig());
-  const [activeWingId, setActiveWingId] = useState<string>(() => loadWingsConfig()[0]?.id || 'flying-wing');
+  const [activeWingId, setActiveWingId] = useState<string>(() => {
+    const configured = loadWingsConfig();
+    return (
+      configured.find((w) => w.id === 'flying-wing' || w.name === 'Flying Wing')?.id ||
+      configured[0]?.id ||
+      'flying-wing'
+    );
+  });
   const [isNoticeDismissed, setIsNoticeDismissed] = useState(false);
   const [themePref, setThemePref] = useState<ThemePreference>(() => loadThemePreference());
   const [rolePermissions, setRolePermissions] = useState<RolePermissionsConfig>(() =>
@@ -145,11 +156,6 @@ export default function App() {
       return;
     }
     pendingAuthActionRef.current = onSuccess;
-    setIsOperatorAuthOpen(true);
-  }, []);
-
-  const openOperatorSwitcher = React.useCallback(() => {
-    pendingAuthActionRef.current = null;
     setIsOperatorAuthOpen(true);
   }, []);
 
@@ -800,6 +806,7 @@ export default function App() {
         name: fallbackWing?.name || 'Flying Wing',
         shortName: fallbackWing?.shortName || 'FLG WG',
         units: [loggedInUserUnit],
+        preparedBy: fallbackWing?.preparedBy,
       },
     ];
   }, [isRestrictedUser, loggedInUserUnit, wings]);
@@ -822,6 +829,7 @@ export default function App() {
   }, [isRestrictedUser, loggedInUserUnit, visibleWings, activeTab, activeWingId]);
 
   const activeWing = visibleWings.find((w) => w.id === activeWingId) || visibleWings[0];
+  const activeWingPreparedBy = getWingPreparedBy(activeWing, dayState.preparedBy);
   const isWingView = visibleWings.some((w) => w.name === activeTab);
   const activeUnitName = isWingView
     ? loggedInUserUnit || visibleWings[0]?.units[0] || '155 UASU BAF'
@@ -942,7 +950,7 @@ export default function App() {
       },
       {
         area: 'Custom Disposal',
-        unitName: 'Flying Wing',
+        unitName: activeWing.name,
         action: `Added custom disposal "${trimmed}"`,
       }
     );
@@ -1019,7 +1027,7 @@ export default function App() {
       },
       {
         area: 'Custom Disposal',
-        unitName: activeTab === 'Flying Wing' ? 'Flying Wing' : activeUnitName,
+        unitName: isWingView ? activeWing.name : activeUnitName,
         action: `Deleted custom disposal "${customName.trim()}"`,
       }
     );
@@ -1176,25 +1184,37 @@ export default function App() {
     );
   };
 
-  // Update Prepared By
+  // Update Prepared By (independent per Wing)
   const handleSavePreparedBy = (updated: PreparedByInfo) => {
     if (!can('editPreparedBy')) return;
-    savePreparedByStorage(updated);
+    const targetWingId = activeWing.id;
+    const isFlyingWingTarget = targetWingId === 'flying-wing';
+    const nextWings = saveWingsConfig(
+      wings.map((w) => (w.id === targetWingId ? { ...w, preparedBy: updated } : w))
+    );
+    setWings(nextWings);
+    if (isFlyingWingTarget) {
+      savePreparedByStorage(updated);
+    }
     updateAndSaveState(
       (prev) => {
         const customList = prev.savedCustomDisposals ?? loadSavedCustomDisposals();
-        markSettingsChangedForCloud(updated, customList);
-        return {
-          ...prev,
-          preparedBy: updated,
-        };
+        const nextRootPreparedBy = isFlyingWingTarget ? updated : prev.preparedBy;
+        markSettingsChangedForCloud(nextRootPreparedBy, customList, { wings: nextWings });
+        return isFlyingWingTarget
+          ? {
+              ...prev,
+              preparedBy: updated,
+            }
+          : prev;
       },
       {
         area: 'Prepared By',
-        unitName: 'Flying Wing',
+        unitName: activeWing.name,
         action: `Updated Prepared By signature (${updated.rank} ${updated.name})`,
       }
     );
+    void flushCloudUploads();
   };
 
   // Update unit remarks (live typing, logged on blur via handleCommitRemarks)
@@ -1288,9 +1308,13 @@ export default function App() {
     );
   };
 
-  // Update Squadron in Flying Wing
+  // Update Squadron in Wing Consolidated State
   const handleUpdateSquadronRow = (updatedRow: UnitRowState) => {
     if (!can('editQuickSqnCount')) return;
+    const rowWing =
+      wings.find((w) =>
+        w.units.some((u) => u.toLowerCase() === updatedRow.sqnUnit.toLowerCase())
+      ) || activeWing;
     updateAndSaveState(
       (prev) => ({
         ...prev,
@@ -1299,7 +1323,7 @@ export default function App() {
         ),
       }),
       {
-        area: 'Quick Edit Sqn Count',
+        area: `Consolidated State : ${rowWing.shortName}`,
         unitName: updatedRow.sqnUnit,
         action: `Updated Sqn count (Total Str: ${updatedRow.totalStr}, Out Parade: ${updatedRow.totalOutParade}, On Parade: ${updatedRow.onParadeForecast})`,
       }
@@ -1310,51 +1334,6 @@ export default function App() {
     if (!can('accessSettings') && currentRole !== 'OWNER') return;
     setSettingsInitialTab(tab);
     setIsSettingsOpen(true);
-  };
-
-  const handleAddWing = (name: string, shortName: string): { ok: boolean; error?: string } => {
-    if (!can('manageWingsAndUnits')) {
-      return { ok: false, error: 'Wing management is restricted for your role.' };
-    }
-    const cleanName = name.trim();
-    if (!cleanName) return { ok: false, error: 'Wing name is required.' };
-    if (wings.some((w) => w.name.toLowerCase() === cleanName.toLowerCase())) {
-      return { ok: false, error: `Wing "${cleanName}" already exists.` };
-    }
-    const cleanShort = (shortName.trim() || cleanName.slice(0, 12)).toUpperCase();
-    const newWing: WingConfig = {
-      id: `wing-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      name: cleanName,
-      shortName: cleanShort,
-      units: [],
-    };
-    const nextWings = saveWingsConfig([...wings, newWing]);
-    setWings(nextWings);
-    markSettingsChangedForCloud(
-      dayState.preparedBy,
-      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
-      { wings: nextWings }
-    );
-    void flushCloudUploads();
-    return { ok: true };
-  };
-
-  const handleDeleteWing = (wingId: string) => {
-    if (!can('manageWingsAndUnits') || wingId === 'flying-wing') return;
-    const removedWing = wings.find((w) => w.id === wingId);
-    const nextWings = saveWingsConfig(wings.filter((w) => w.id !== wingId));
-    setWings(nextWings);
-    if (activeWingId === wingId || (removedWing && activeTab === removedWing.name)) {
-      setActiveWingId('flying-wing');
-      setActiveTab('Flying Wing');
-      setWingSubTab('consolidated');
-    }
-    markSettingsChangedForCloud(
-      dayState.preparedBy,
-      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
-      { wings: nextWings }
-    );
-    void flushCloudUploads();
   };
 
   const handleAddUnitToWing = (
@@ -1427,6 +1406,125 @@ export default function App() {
       { wings: nextWings }
     );
     void flushCloudUploads();
+  };
+
+  const handleUpdateUnitConfig = (
+    oldWingId: string,
+    oldUnitName: string,
+    newWingId: string,
+    newUnitName: string
+  ): { ok: boolean; error?: string } => {
+    if (!can('manageWingsAndUnits')) {
+      return { ok: false, error: 'Unit management is restricted for your role.' };
+    }
+    const cleanNewName = newUnitName.trim();
+    if (!cleanNewName) {
+      return { ok: false, error: 'Sqn/Unit name is required.' };
+    }
+
+    const isSameName = oldUnitName.toLowerCase() === cleanNewName.toLowerCase();
+    if (!isSameName) {
+      const duplicate = wings.some((w) =>
+        w.units.some(
+          (u) =>
+            u.toLowerCase() !== oldUnitName.toLowerCase() &&
+            u.toLowerCase() === cleanNewName.toLowerCase()
+        )
+      );
+      if (duplicate) {
+        return { ok: false, error: `Sqn/Unit "${cleanNewName}" already exists.` };
+      }
+    }
+
+    const updatedWings = wings.map((w) => {
+      if (oldWingId === newWingId) {
+        if (w.id !== oldWingId) return w;
+        return {
+          ...w,
+          units: w.units.map((u) =>
+            u.toLowerCase() === oldUnitName.toLowerCase() ? cleanNewName : u
+          ),
+        };
+      }
+      if (w.id === oldWingId) {
+        return {
+          ...w,
+          units: w.units.filter((u) => u.toLowerCase() !== oldUnitName.toLowerCase()),
+        };
+      }
+      if (w.id === newWingId) {
+        return {
+          ...w,
+          units: [...w.units.filter((u) => u.toLowerCase() !== cleanNewName.toLowerCase()), cleanNewName],
+        };
+      }
+      return w;
+    });
+
+    const nextWings = saveWingsConfig(updatedWings);
+    setWings(nextWings);
+
+    if (activeTab.toLowerCase() === oldUnitName.toLowerCase()) {
+      setActiveTab(cleanNewName);
+      setActiveWingId(newWingId);
+    }
+
+    if (!isSameName) {
+      updateAndSaveState(
+        (prev) => {
+          const oldAirmen = getUnitAirmen(prev, oldUnitName).map((a) => ({
+            ...a,
+            unit: cleanNewName,
+          }));
+          let nextState: DayState = setUnitAirmen(prev, cleanNewName, oldAirmen);
+          if (oldUnitName === '155 UASU BAF') {
+            nextState = { ...nextState, airmen155: [] };
+          } else if (nextState.unitAirmen && oldUnitName in nextState.unitAirmen) {
+            const nextMap = { ...nextState.unitAirmen };
+            delete nextMap[oldUnitName];
+            nextState = { ...nextState, unitAirmen: nextMap };
+          }
+
+          const oldRmks = getUnitRemarks(prev, oldUnitName);
+          nextState = setUnitRemarks(nextState, cleanNewName, oldRmks);
+          if (oldUnitName === '155 UASU BAF') {
+            nextState = { ...nextState, customRemarks: '' };
+          } else if (nextState.unitRemarks && oldUnitName in nextState.unitRemarks) {
+            const nextRmksMap = { ...nextState.unitRemarks };
+            delete nextRmksMap[oldUnitName];
+            nextState = { ...nextState, unitRemarks: nextRmksMap };
+          }
+
+          nextState = {
+            ...nextState,
+            disposals: (nextState.disposals || []).map((d) =>
+              d.unit.toLowerCase() === oldUnitName.toLowerCase()
+                ? { ...d, unit: cleanNewName }
+                : d
+            ),
+            consolidatedUnits: nextState.consolidatedUnits.map((row) =>
+              row.sqnUnit.toLowerCase() === oldUnitName.toLowerCase()
+                ? { ...row, sqnUnit: cleanNewName }
+                : row
+            ),
+          };
+          return nextState;
+        },
+        {
+          area: 'Unit State',
+          unitName: cleanNewName,
+          action: `Updated Sqn/Unit "${oldUnitName}" to "${cleanNewName}"`,
+        }
+      );
+    }
+
+    markSettingsChangedForCloud(
+      dayState.preparedBy,
+      dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
+      { wings: nextWings }
+    );
+    void flushCloudUploads();
+    return { ok: true };
   };
 
   const handleDeleteAirmanByUnit = (unitName: string, airmanId: string) => {
@@ -1673,7 +1771,14 @@ export default function App() {
           (entry) => entry.unitName.toLowerCase() === loggedInUserUnit.toLowerCase()
         )
       : dayState.updateLogs || [];
-  const totalDayLogsCount = visibleDayLogs.length;
+  const activeWingLogsCount = visibleDayLogs.filter((entry) => {
+    const entryUnitLower = (entry.unitName || '').trim().toLowerCase();
+    return (
+      entryUnitLower === activeWing.name.toLowerCase() ||
+      entryUnitLower === activeWing.shortName.toLowerCase() ||
+      activeWing.units.some((u) => u.toLowerCase() === entryUnitLower)
+    );
+  }).length;
   const activeUnitLogsCount = visibleDayLogs.filter(
     (entry) => entry.unitName === activeUnitName
   ).length;
@@ -1695,6 +1800,23 @@ export default function App() {
     );
   }
 
+  if (isCalendarOpen) {
+    return (
+      <>
+        <DatePickerModal
+          isOpen={true}
+          selectedDateIso={dateIso}
+          onSelectDate={(iso) => {
+            handleDateChange(iso);
+            setIsCalendarOpen(false);
+          }}
+          onClose={() => setIsCalendarOpen(false)}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#070d18] text-slate-100 flex font-sans antialiased selection:bg-emerald-500 selection:text-black">
       {/* Left Navigation Sidebar (Pic 2 Layout) */}
@@ -1706,7 +1828,7 @@ export default function App() {
           dayState={dayState}
           operator={verifiedOperator}
           operatorRole={currentRole}
-          brandTitle={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : '155 UASU BAF'}
+          brandTitle={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : 'BAF BASE ZHR'}
           isCollapsed={isSidebarCollapsed}
           isMobileOpen={isMobileSidebarOpen}
           isSettingsOpen={isSettingsOpen}
@@ -1739,7 +1861,7 @@ export default function App() {
             formattedDate={dayState.formattedDisplayDate}
             onPrevDate={handlePrevDate}
             onNextDate={handleNextDate}
-            onDateChange={handleDateChange}
+            onOpenCalendar={() => setIsCalendarOpen(true)}
             onOpenPrint={() => can('exportPrintReport') && setIsPrintOpen(true)}
             activeTab={activeTab}
             isWingView={isWingView}
@@ -1778,36 +1900,36 @@ export default function App() {
         <main className="flex-1 w-full pt-3 sm:pt-4 pb-6">
           {isWingView ? (
             <>
-              {/* Sub-options hidden during isolated Quick Edit Sqn Count page */}
+              {/* Separate Sub-Option Boxes (Consolidated State, Prepared By, Update Log) */}
               {!isQuickEditActive && (
                 <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 mb-3">
-                  <div className="inline-flex flex-wrap items-center gap-1.5 bg-[#0b1424] border border-[#1b2a44] p-1 rounded-xl">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => {
                         setWingSubTab('consolidated');
                         setIsPreparedByOpen(false);
                       }}
-                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
                         wingSubTab === 'consolidated' && !isPreparedByOpen
-                          ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                          ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                          : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
                       }`}
                     >
-                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
                       <span>Consolidated State</span>
                     </button>
                     {can('editPreparedBy') && (
                       <button
                         type="button"
                         onClick={() => requireOperatorAuth(() => setIsPreparedByOpen(true))}
-                        className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
                           isPreparedByOpen
-                            ? 'bg-emerald-600 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                            ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                            : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
                         }`}
                       >
-                        <UserCheck className="w-3.5 h-3.5" />
+                        <UserCheck className="w-3.5 h-3.5 shrink-0" />
                         <span>Prepared By</span>
                       </button>
                     )}
@@ -1818,16 +1940,22 @@ export default function App() {
                           setIsPreparedByOpen(false);
                           setWingSubTab('log');
                         }}
-                        className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
                           wingSubTab === 'log' && !isPreparedByOpen
-                            ? 'bg-emerald-600 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                            ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                            : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
                         }`}
                       >
-                        <History className="w-3.5 h-3.5" />
+                        <History className="w-3.5 h-3.5 shrink-0" />
                         <span>Update Log</span>
-                        <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-slate-900/60 text-[10px] text-slate-200 tabular-nums">
-                          {totalDayLogsCount}
+                        <span
+                          className={`subtab-count-pill ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tabular-nums ${
+                            wingSubTab === 'log' && !isPreparedByOpen
+                              ? 'bg-slate-950/20 text-slate-950'
+                              : 'bg-slate-900/70 text-slate-200'
+                          }`}
+                        >
+                          {activeWingLogsCount}
                         </span>
                       </button>
                     )}
@@ -1835,13 +1963,182 @@ export default function App() {
                 </div>
               )}
 
-              {wingSubTab === 'log' ? (
-                can('viewUpdateLog') ? (
+              <div key={`${activeWing.id}-${wingSubTab}`} className="animate-tab-enter">
+                {wingSubTab === 'log' ? (
+                  can('viewUpdateLog') ? (
+                    <StateUpdateLogView
+                      dayState={dayState}
+                      wings={wings}
+                      activeWing={activeWing}
+                      lockedUnit={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
+                    />
+                  ) : (
+                    <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                      <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                        <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                        <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                        <div className="text-xs text-slate-400">
+                          Update Log access is currently disabled for {currentRole}.
+                        </div>
+                      </div>
+                    </div>
+                  )
+                ) : can('viewConsolidatedState') ? (
+                  <ConsolidatedWingView
+                    dayState={dayState}
+                    activeWing={activeWing}
+                    preparedBy={activeWingPreparedBy}
+                    canQuickEdit={can('editQuickSqnCount')}
+                    onUpdateSquadronRow={handleUpdateSquadronRow}
+                    onSelectUnit={(unitName) => handleTabChange(unitName)}
+                    onAddCustomDisposal={handleAddCustomDisposal}
+                    onDeleteCustomDisposal={handleDeleteCustomDisposal}
+                    onRequireAuth={requireOperatorAuth}
+                    onEditingChange={setIsQuickEditActive}
+                    onSettingsChanged={() =>
+                      markSettingsChangedForCloud(
+                        dayState.preparedBy,
+                        dayState.savedCustomDisposals ?? loadSavedCustomDisposals()
+                      )
+                    }
+                  />
+                ) : (
+                  <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                    <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                      <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                      <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                      <div className="text-xs text-slate-400">
+                        Consolidated Wing State view is currently disabled for {currentRole}.
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Separate Sub-Option Boxes inside each Squadron/Unit (Night Count State, Nominal Roll, Update Log) */}
+              <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 mb-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setUnitSubTab('state')}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
+                      unitSubTab === 'state'
+                        ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                        : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+                    <span>Night Count State</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUnitSubTab('nominalRoll')}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
+                      unitSubTab === 'nominalRoll'
+                        ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                        : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5 shrink-0" />
+                    <span>Nominal Roll</span>
+                    <span
+                      className={`subtab-count-pill ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tabular-nums ${
+                        unitSubTab === 'nominalRoll'
+                          ? 'bg-slate-950/20 text-slate-950'
+                          : 'bg-slate-900/70 text-slate-200'
+                      }`}
+                    >
+                      {activeUnitAirmenCount}
+                    </span>
+                  </button>
+                  {can('viewUpdateLog') && (
+                    <button
+                      type="button"
+                      onClick={() => setUnitSubTab('log')}
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
+                        unitSubTab === 'log'
+                          ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                          : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
+                      }`}
+                    >
+                      <History className="w-3.5 h-3.5 shrink-0" />
+                      <span>Update Log</span>
+                      <span
+                        className={`subtab-count-pill ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tabular-nums ${
+                          unitSubTab === 'log'
+                            ? 'bg-slate-950/20 text-slate-950'
+                            : 'bg-slate-900/70 text-slate-200'
+                        }`}
+                      >
+                        {activeUnitLogsCount}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div key={`${activeUnitName}-${unitSubTab}`} className="animate-tab-enter">
+                {unitSubTab === 'state' ? (
+                  can('viewUnitDetails') ? (
+                    <UnitStateView
+                      unitName={activeUnitName}
+                      dayState={dayState}
+                      onRemoveDisposal={handleRemoveDisposal}
+                      onToggleAirmanParade={handleToggleAirmanParade}
+                      onSelectAirmanForDisposal={() => setUnitSubTab('nominalRoll')}
+                      onUpdateRemarks={handleUpdateRemarks}
+                      onCommitRemarks={handleCommitRemarks}
+                      onRequireAuth={requireOperatorAuth}
+                      isOperatorVerified={Boolean(verifiedOperator)}
+                      canEditRemarks={can('editUnitDisposals')}
+                    />
+                  ) : (
+                    <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                      <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                        <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                        <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                        <div className="text-xs text-slate-400">
+                          Unit Night Count State view is currently disabled for {currentRole}.
+                        </div>
+                      </div>
+                    </div>
+                  )
+                ) : unitSubTab === 'nominalRoll' ? (
+                  can('viewUnitDetails') || can('manageNominalRoll') ? (
+                    <NominalRollView
+                      unitName={activeUnitName}
+                      dayState={dayState}
+                      onUpdateAirmanDisposal={handleUpdateAirmanDisposal}
+                      onUpdateAirmanFull={handleUpdateAirmanFull}
+                      onAddAirman={handleAddAirmanToRoster}
+                      onAddAirmenBulk={handleAddAirmenBulk}
+                      onDeleteAirman={handleDeleteAirman}
+                      onDeleteCustomDisposal={handleDeleteCustomDisposal}
+                      onRequireAuth={requireOperatorAuth}
+                      canEditDisposals={can('editUnitDisposals')}
+                      canManageNominalRoll={can('manageNominalRoll')}
+                      canDeleteAirman={can('deleteNominalRollAirman')}
+                    />
+                  ) : (
+                    <div className="w-full max-w-3xl mx-auto px-4 py-12">
+                      <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                        <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                        <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                        <div className="text-xs text-slate-400">
+                          Nominal Roll access is currently disabled for {currentRole}.
+                        </div>
+                      </div>
+                    </div>
+                  )
+                ) : can('viewUpdateLog') ? (
                   <StateUpdateLogView
                     dayState={dayState}
+                    wings={wings}
+                    activeWing={activeWing}
+                    unitFilter={activeUnitName}
                     lockedUnit={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
-                    verifiedOperator={verifiedOperator}
-                    onRequestChangeOperator={openOperatorSwitcher}
                   />
                 ) : (
                   <div className="w-full max-w-3xl mx-auto px-4 py-12">
@@ -1853,160 +2150,8 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                )
-              ) : can('viewConsolidatedState') ? (
-                <ConsolidatedWingView
-                  dayState={dayState}
-                  activeWing={activeWing}
-                  canQuickEdit={can('editQuickSqnCount')}
-                  onUpdateSquadronRow={handleUpdateSquadronRow}
-                  onSelectUnit={(unitName) => handleTabChange(unitName)}
-                  onAddCustomDisposal={handleAddCustomDisposal}
-                  onDeleteCustomDisposal={handleDeleteCustomDisposal}
-                  onRequireAuth={requireOperatorAuth}
-                  onEditingChange={setIsQuickEditActive}
-                  onSettingsChanged={() =>
-                    markSettingsChangedForCloud(
-                      dayState.preparedBy,
-                      dayState.savedCustomDisposals ?? loadSavedCustomDisposals()
-                    )
-                  }
-                />
-              ) : (
-                <div className="w-full max-w-3xl mx-auto px-4 py-12">
-                  <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
-                    <Lock className="w-7 h-7 text-amber-400 mx-auto" />
-                    <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
-                    <div className="text-xs text-slate-400">
-                      Consolidated Wing State view is currently disabled for {currentRole}.
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              {/* Inner Sub-Tabs inside each Squadron/Unit (Night Count State, Nominal Roll, Update Log) */}
-              <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 mb-3">
-                <div className="inline-flex flex-wrap items-center gap-1.5 bg-[#0b1424] border border-[#1b2a44] p-1 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => setUnitSubTab('state')}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      unitSubTab === 'state'
-                        ? 'bg-emerald-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5" />
-                    <span>Night Count State</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUnitSubTab('nominalRoll')}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      unitSubTab === 'nominalRoll'
-                        ? 'bg-emerald-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <Users className="w-3.5 h-3.5" />
-                    <span>Nominal Roll</span>
-                    <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-slate-900/60 text-[10px] text-slate-200 tabular-nums">
-                      {activeUnitAirmenCount}
-                    </span>
-                  </button>
-                  {can('viewUpdateLog') && (
-                    <button
-                      type="button"
-                      onClick={() => setUnitSubTab('log')}
-                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                        unitSubTab === 'log'
-                          ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                      }`}
-                    >
-                      <History className="w-3.5 h-3.5" />
-                      <span>Update Log</span>
-                      <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-slate-900/60 text-[10px] text-slate-200 tabular-nums">
-                        {activeUnitLogsCount}
-                      </span>
-                    </button>
-                  )}
-                </div>
+                )}
               </div>
-
-              {unitSubTab === 'state' ? (
-                can('viewUnitDetails') ? (
-                  <UnitStateView
-                    unitName={activeUnitName}
-                    dayState={dayState}
-                    onRemoveDisposal={handleRemoveDisposal}
-                    onToggleAirmanParade={handleToggleAirmanParade}
-                    onSelectAirmanForDisposal={() => setUnitSubTab('nominalRoll')}
-                    onUpdateRemarks={handleUpdateRemarks}
-                    onCommitRemarks={handleCommitRemarks}
-                    onRequireAuth={requireOperatorAuth}
-                    isOperatorVerified={Boolean(verifiedOperator)}
-                    canEditRemarks={can('editUnitDisposals')}
-                  />
-                ) : (
-                  <div className="w-full max-w-3xl mx-auto px-4 py-12">
-                    <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
-                      <Lock className="w-7 h-7 text-amber-400 mx-auto" />
-                      <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
-                      <div className="text-xs text-slate-400">
-                        Unit Night Count State view is currently disabled for {currentRole}.
-                      </div>
-                    </div>
-                  </div>
-                )
-              ) : unitSubTab === 'nominalRoll' ? (
-                can('viewUnitDetails') || can('manageNominalRoll') ? (
-                  <NominalRollView
-                    unitName={activeUnitName}
-                    dayState={dayState}
-                    onUpdateAirmanDisposal={handleUpdateAirmanDisposal}
-                    onUpdateAirmanFull={handleUpdateAirmanFull}
-                    onAddAirman={handleAddAirmanToRoster}
-                    onAddAirmenBulk={handleAddAirmenBulk}
-                    onDeleteAirman={handleDeleteAirman}
-                    onDeleteCustomDisposal={handleDeleteCustomDisposal}
-                    onRequireAuth={requireOperatorAuth}
-                    canEditDisposals={can('editUnitDisposals')}
-                    canManageNominalRoll={can('manageNominalRoll')}
-                    canDeleteAirman={can('deleteNominalRollAirman')}
-                  />
-                ) : (
-                  <div className="w-full max-w-3xl mx-auto px-4 py-12">
-                    <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
-                      <Lock className="w-7 h-7 text-amber-400 mx-auto" />
-                      <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
-                      <div className="text-xs text-slate-400">
-                        Nominal Roll access is currently disabled for {currentRole}.
-                      </div>
-                    </div>
-                  </div>
-                )
-              ) : can('viewUpdateLog') ? (
-                <StateUpdateLogView
-                  dayState={dayState}
-                  unitFilter={activeUnitName}
-                  lockedUnit={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
-                  verifiedOperator={verifiedOperator}
-                  onRequestChangeOperator={openOperatorSwitcher}
-                />
-              ) : (
-                <div className="w-full max-w-3xl mx-auto px-4 py-12">
-                  <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
-                    <Lock className="w-7 h-7 text-amber-400 mx-auto" />
-                    <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
-                    <div className="text-xs text-slate-400">
-                      Update Log access is currently disabled for {currentRole}.
-                    </div>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </main>
@@ -2016,7 +2161,7 @@ export default function App() {
           <footer className="border-t border-[#142036] bg-[#060c17] px-4 sm:px-6 py-2.5 text-[11px] text-slate-400">
             <div className="w-full max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-1.5">
               <span className="font-semibold text-slate-300">
-                {isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : '155 UASU BAF'} • Night Count State System
+                {isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : 'BAF BASE ZHR'} • Night Count State System
               </span>
               <span className="text-slate-500">
                 Bangladesh Air Force • Confidential Personnel Night Count Register
@@ -2055,17 +2200,12 @@ export default function App() {
         dayState={dayState}
         wings={visibleWings}
         restrictedUnitName={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
-        onAddWing={handleAddWing}
-        onDeleteWing={handleDeleteWing}
         onAddUnitToWing={handleAddUnitToWing}
+        onUpdateUnitConfig={handleUpdateUnitConfig}
         onDeleteUnitFromWing={handleDeleteUnitFromWing}
         onOpenUnitNominalRoll={(unitName) => {
           handleTabChange(unitName);
           setUnitSubTab('nominalRoll');
-        }}
-        onOpenUnitState={(unitName) => {
-          handleTabChange(unitName);
-          setUnitSubTab('state');
         }}
         onAddAirmanFromSettings={handleAddAirmanFromSettings}
         onDeleteAirmanFromSettings={handleDeleteAirmanByUnit}
@@ -2085,7 +2225,8 @@ export default function App() {
       <PreparedByModal
         isOpen={isPreparedByOpen}
         onClose={() => setIsPreparedByOpen(false)}
-        preparedBy={dayState.preparedBy}
+        preparedBy={activeWingPreparedBy}
+        wingName={activeWing.name}
         onSave={handleSavePreparedBy}
       />
 

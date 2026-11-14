@@ -6,6 +6,7 @@ interface PreparedByModalProps {
   isOpen: boolean;
   onClose: () => void;
   preparedBy: PreparedByInfo;
+  wingName?: string;
   onSave: (updated: PreparedByInfo) => void;
 }
 
@@ -13,6 +14,7 @@ export const PreparedByModal: React.FC<PreparedByModalProps> = ({
   isOpen,
   onClose,
   preparedBy,
+  wingName,
   onSave,
 }) => {
   const [formData, setFormData] = useState<PreparedByInfo>({ ...preparedBy });
@@ -42,22 +44,29 @@ export const PreparedByModal: React.FC<PreparedByModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-      <div className="bg-[#0b1424] border border-[#1b2a44] w-full max-w-[360px] rounded-xl shadow-2xl overflow-hidden text-slate-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-backdrop-fade">
+      <div className="bg-[#0b1424] border border-[#1b2a44] w-full max-w-[360px] rounded-xl shadow-2xl overflow-hidden text-slate-200 animate-modal-pop">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 bg-[#0e1b30] border-b border-slate-700/80">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-lg bg-emerald-950/80 border border-emerald-700/70 text-emerald-400">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-1.5 rounded-lg bg-emerald-950/80 border border-emerald-700/70 text-emerald-400 shrink-0">
               <UserCheck className="w-4 h-4" />
             </div>
-            <h3 className="font-bold text-sm sm:text-base text-slate-100">
-              Prepared By Signature
-            </h3>
+            <div className="min-w-0">
+              <h3 className="font-bold text-sm sm:text-base text-slate-100 leading-tight">
+                Prepared By Signature
+              </h3>
+              {wingName && (
+                <p className="text-[11px] font-semibold text-emerald-400 truncate">
+                  {wingName}
+                </p>
+              )}
+            </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors cursor-pointer"
+            className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors cursor-pointer shrink-0"
             title="Close"
           >
             <X className="w-4 h-4" />
@@ -108,7 +117,7 @@ export const PreparedByModal: React.FC<PreparedByModalProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              className="w-full py-2.5 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs sm:text-sm cursor-pointer transition-all shadow-md"
+              className="w-full py-2.5 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm cursor-pointer transition-all shadow-md"
             >
               Save Signature
             </button>
