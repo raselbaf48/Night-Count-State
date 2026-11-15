@@ -20,6 +20,7 @@ interface PrintReportModalProps {
   activeTab?: string;
   activeWing?: WingConfig;
   unitSubTab?: 'state' | 'nominalRoll';
+  canDownloadExports?: boolean;
 }
 
 export const PrintReportModal: React.FC<PrintReportModalProps> = ({
@@ -29,6 +30,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
   activeTab = '155 UASU BAF',
   activeWing,
   unitSubTab = 'state',
+  canDownloadExports = true,
 }) => {
   const [isExportingJpg, setIsExportingJpg] = useState(false);
   const [jpgStatus, setJpgStatus] = useState<'idle' | 'copied' | 'saved'>('idle');
@@ -67,7 +69,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
     { key: 'awolDetention', label: 'AWOL/Detention' },
     { key: 'sickReport', label: 'Sick report' },
     { key: 'edExPpgf', label: 'ED/EX PPGF' },
-    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH/Qmt' },
+    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH' },
     { key: 'ucUBoard', label: 'U/C, U/Board' },
     { key: 'officeDuty', label: 'Office Duty' },
     { key: 'aftNiFlgNiDuty', label: 'Aft/Ni flg/Ni Duty' },
@@ -131,7 +133,7 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
     { key: 'awolDetention', label: 'AWOL/Detention' },
     { key: 'sickReport', label: 'Sick report' },
     { key: 'edExPpgf', label: 'ED/EX PPGF' },
-    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH/Qmt' },
+    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH' },
     { key: 'ucUBoard', label: 'U/C, U/Board' },
     { key: 'officeDuty', label: 'Office Duty' },
     { key: 'aftNiFlgNiDuty', label: 'Aft/Ni flg/Ni Duty' },
@@ -219,38 +221,42 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleExportDoc}
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#2563eb] hover:bg-blue-500 text-white font-semibold text-[11px] sm:text-xs rounded-lg transition-colors cursor-pointer shadow-sm whitespace-nowrap"
-              title="Download Microsoft Word document"
-            >
-              <FileText className="w-3.5 h-3.5 shrink-0" />
-              <span>Export Doc</span>
-            </button>
+            {canDownloadExports && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleExportDoc}
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#2563eb] hover:bg-blue-500 text-white font-semibold text-[11px] sm:text-xs rounded-lg transition-colors cursor-pointer shadow-sm whitespace-nowrap"
+                  title="Download Microsoft Word document"
+                >
+                  <FileText className="w-3.5 h-3.5 shrink-0" />
+                  <span>Export Doc</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={handleExportJpg}
-              disabled={isExportingJpg}
-              className="export-jpg-btn flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-semibold text-[11px] sm:text-xs rounded-lg transition-colors cursor-pointer shadow-sm whitespace-nowrap"
-              title="Download JPG image and copy to clipboard"
-            >
-              {jpgStatus !== 'idle' ? (
-                <Check className="w-3.5 h-3.5 shrink-0" />
-              ) : (
-                <ImageIcon className="w-3.5 h-3.5 shrink-0" />
-              )}
-              <span>
-                {isExportingJpg
-                  ? 'Exporting...'
-                  : jpgStatus === 'copied'
-                    ? 'JPG Copied!'
-                    : jpgStatus === 'saved'
-                      ? 'JPG Saved!'
-                      : 'Export JPG'}
-              </span>
-            </button>
+                <button
+                  type="button"
+                  onClick={handleExportJpg}
+                  disabled={isExportingJpg}
+                  className="export-jpg-btn flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-semibold text-[11px] sm:text-xs rounded-lg transition-colors cursor-pointer shadow-sm whitespace-nowrap"
+                  title="Download JPG image and copy to clipboard"
+                >
+                  {jpgStatus !== 'idle' ? (
+                    <Check className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>
+                    {isExportingJpg
+                      ? 'Exporting...'
+                      : jpgStatus === 'copied'
+                        ? 'JPG Copied!'
+                        : jpgStatus === 'saved'
+                          ? 'JPG Saved!'
+                          : 'Export JPG'}
+                  </span>
+                </button>
+              </>
+            )}
 
             <button
               type="button"

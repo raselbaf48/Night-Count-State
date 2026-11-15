@@ -19,6 +19,7 @@ interface UnitStateViewProps {
   onRequireAuth?: (onSuccess: () => void) => void;
   isOperatorVerified?: boolean;
   canEditRemarks?: boolean;
+  isGuestView?: boolean;
 }
 
 export const UnitStateView: React.FC<UnitStateViewProps> = ({
@@ -29,6 +30,7 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
   onRequireAuth,
   isOperatorVerified = false,
   canEditRemarks = true,
+  isGuestView = false,
 }) => {
   const remarksInputRef = useRef<HTMLInputElement>(null);
   const initialRemarksRef = useRef<string>('');
@@ -71,7 +73,7 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
     { key: 'awolDetention', label: 'AWOL/Detention' },
     { key: 'sickReport', label: 'Sick report' },
     { key: 'edExPpgf', label: 'ED/EX PPGF' },
-    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH/Qmt' },
+    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH' },
     { key: 'ucUBoard', label: 'U/C, U/Board' },
     { key: 'officeDuty', label: 'Office Duty' },
     { key: 'aftNiFlgNiDuty', label: 'Aft/Ni flg/Ni Duty' },
@@ -90,6 +92,11 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
     <div className="w-full max-w-7xl mx-auto px-4 pb-12 text-[12px]">
       {/* Outer Military Report Card */}
       <div className="bg-[#0b1424] border border-[#1b2a44] rounded-xl p-5 sm:p-7 shadow-2xl relative overflow-hidden">
+        {isGuestView && (
+          <div className="mb-4 px-3.5 py-2 rounded-lg bg-sky-950/40 border border-sky-500/35 text-sky-300 text-[11px] font-semibold text-center">
+            Guest Preview Mode — Format Only (Personnel roster &amp; disposals hidden)
+          </div>
+        )}
         {/* Document Header */}
         <div className="flex flex-col items-center justify-center text-center mb-2">
           <h2 className="text-sm sm:text-base font-bold tracking-wider text-slate-100 uppercase underline decoration-slate-400 underline-offset-4">
@@ -366,6 +373,52 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
                   </div>
                 </div>
               ))}
+          </div>
+        )}
+
+        {isGuestView && (
+          <div className="flex flex-row flex-wrap gap-x-12 sm:gap-x-16 gap-y-6 text-[12px] text-slate-400 italic">
+            <div>
+              <h4 className="font-bold text-[12px] text-slate-300 uppercase underline decoration-slate-500 underline-offset-4 mb-2.5 not-italic">
+                ON PARADE
+              </h4>
+              <div className="space-y-1">
+                <div className="py-0.5 whitespace-nowrap">1. [Rank] [Name]</div>
+                <div className="py-0.5 whitespace-nowrap">2. [Rank] [Name]</div>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-bold text-[12px] text-slate-300 uppercase underline decoration-slate-500 underline-offset-4 mb-2.5 not-italic">
+                TDY
+              </h4>
+              <div className="space-y-1">
+                <div className="py-0.5 whitespace-nowrap">1. [Rank] [Name]</div>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-bold text-[12px] text-slate-300 uppercase underline decoration-slate-500 underline-offset-4 mb-2.5 not-italic">
+                DUTY ON
+              </h4>
+              <div className="space-y-1">
+                <div className="py-0.5 whitespace-nowrap">1. [Rank] [Name] - [Duty Type]</div>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-bold text-[12px] text-slate-300 uppercase underline decoration-slate-500 underline-offset-4 mb-2.5 not-italic">
+                OFFICE
+              </h4>
+              <div className="space-y-1">
+                <div className="py-0.5 whitespace-nowrap">1. [Rank] [Name]</div>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-bold text-[12px] text-slate-300 uppercase underline decoration-slate-500 underline-offset-4 mb-2.5 not-italic">
+                LEAVE
+              </h4>
+              <div className="space-y-1">
+                <div className="py-0.5 whitespace-nowrap">1. [Rank] [Name]</div>
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -4,6 +4,7 @@ import {
   DisposalRecord,
   LoginHistoryEntry,
   OperatorProfile,
+  PermissionLevel,
   PreparedByInfo,
   RolePermissionKey,
   RolePermissions,
@@ -180,68 +181,134 @@ const THEME_PREF_KEY = 'night_count_theme_preference';
 const ROLE_PERMISSIONS_KEY = 'night_count_role_permissions';
 
 export const ALL_PERMISSION_KEYS: RolePermissionKey[] = [
+  'menuOverview',
   'viewConsolidatedState',
   'editQuickSqnCount',
+  'editPreparedBy',
+  'exportPrintReport',
+  'viewUpdateLog',
+  'menuSquadrons',
   'viewUnitDetails',
   'editUnitDisposals',
   'manageNominalRoll',
   'deleteNominalRollAirman',
-  'editPreparedBy',
-  'exportPrintReport',
-  'viewUpdateLog',
+  'viewUnitUpdateLog',
   'accessSettings',
+  'settingsTheme',
   'manageWingsAndUnits',
   'manageUsers',
+  'settingsPermissions',
+  'settingsHistory',
   'manageCloudAndNotice',
+  'settingsNotice',
 ];
 
 export const DEFAULT_ROLE_PERMISSIONS: RolePermissionsConfig = {
   SUPER_ADMIN: {
-    viewConsolidatedState: true,
-    editQuickSqnCount: true,
-    viewUnitDetails: true,
-    editUnitDisposals: true,
-    manageNominalRoll: true,
-    deleteNominalRollAirman: true,
-    editPreparedBy: true,
-    exportPrintReport: true,
-    viewUpdateLog: true,
-    accessSettings: true,
-    manageWingsAndUnits: true,
-    manageUsers: true,
-    manageCloudAndNotice: true,
+    menuOverview: 'manage',
+    viewConsolidatedState: 'manage',
+    editQuickSqnCount: 'manage',
+    editPreparedBy: 'manage',
+    exportPrintReport: 'manage',
+    viewUpdateLog: 'view',
+    menuSquadrons: 'manage',
+    viewUnitDetails: 'manage',
+    editUnitDisposals: 'manage',
+    manageNominalRoll: 'manage',
+    deleteNominalRollAirman: 'manage',
+    viewUnitUpdateLog: 'view',
+    accessSettings: 'manage',
+    settingsTheme: 'manage',
+    manageWingsAndUnits: 'manage',
+    manageUsers: 'manage',
+    settingsPermissions: 'view',
+    settingsHistory: 'manage',
+    manageCloudAndNotice: 'manage',
+    settingsNotice: 'manage',
+  },
+  ADMIN: {
+    menuOverview: 'manage',
+    viewConsolidatedState: 'manage',
+    editQuickSqnCount: 'manage',
+    editPreparedBy: 'view',
+    exportPrintReport: 'manage',
+    viewUpdateLog: 'view',
+    menuSquadrons: 'manage',
+    viewUnitDetails: 'view',
+    editUnitDisposals: 'manage',
+    manageNominalRoll: 'manage',
+    deleteNominalRollAirman: 'manage',
+    viewUnitUpdateLog: 'view',
+    accessSettings: 'view',
+    settingsTheme: 'manage',
+    manageWingsAndUnits: 'view',
+    manageUsers: 'view',
+    settingsPermissions: 'hide',
+    settingsHistory: 'view',
+    manageCloudAndNotice: 'hide',
+    settingsNotice: 'view',
   },
   USER: {
-    viewConsolidatedState: true,
-    editQuickSqnCount: true,
-    viewUnitDetails: true,
-    editUnitDisposals: true,
-    manageNominalRoll: true,
-    deleteNominalRollAirman: false,
-    editPreparedBy: true,
-    exportPrintReport: true,
-    viewUpdateLog: true,
-    accessSettings: true,
-    manageWingsAndUnits: false,
-    manageUsers: false,
-    manageCloudAndNotice: false,
+    menuOverview: 'view',
+    viewConsolidatedState: 'view',
+    editQuickSqnCount: 'hide',
+    editPreparedBy: 'hide',
+    exportPrintReport: 'manage',
+    viewUpdateLog: 'view',
+    menuSquadrons: 'manage',
+    viewUnitDetails: 'view',
+    editUnitDisposals: 'manage',
+    manageNominalRoll: 'manage',
+    deleteNominalRollAirman: 'hide',
+    viewUnitUpdateLog: 'view',
+    accessSettings: 'view',
+    settingsTheme: 'manage',
+    manageWingsAndUnits: 'view',
+    manageUsers: 'hide',
+    settingsPermissions: 'hide',
+    settingsHistory: 'hide',
+    manageCloudAndNotice: 'hide',
+    settingsNotice: 'hide',
   },
   GUEST: {
-    viewConsolidatedState: true,
-    editQuickSqnCount: false,
-    viewUnitDetails: true,
-    editUnitDisposals: false,
-    manageNominalRoll: false,
-    deleteNominalRollAirman: false,
-    editPreparedBy: false,
-    exportPrintReport: true,
-    viewUpdateLog: true,
-    accessSettings: false,
-    manageWingsAndUnits: false,
-    manageUsers: false,
-    manageCloudAndNotice: false,
+    menuOverview: 'view',
+    viewConsolidatedState: 'view',
+    editQuickSqnCount: 'hide',
+    editPreparedBy: 'hide',
+    exportPrintReport: 'manage',
+    viewUpdateLog: 'view',
+    menuSquadrons: 'view',
+    viewUnitDetails: 'view',
+    editUnitDisposals: 'hide',
+    manageNominalRoll: 'view',
+    deleteNominalRollAirman: 'hide',
+    viewUnitUpdateLog: 'view',
+    accessSettings: 'view',
+    settingsTheme: 'manage',
+    manageWingsAndUnits: 'view',
+    manageUsers: 'hide',
+    settingsPermissions: 'hide',
+    settingsHistory: 'hide',
+    manageCloudAndNotice: 'hide',
+    settingsNotice: 'hide',
   },
 };
+
+function sanitizePermissionValue(
+  rawVal: unknown,
+  fallback: PermissionLevel
+): PermissionLevel {
+  if (rawVal === 'hide' || rawVal === 'view' || rawVal === 'manage') {
+    return rawVal;
+  }
+  if (rawVal === true) {
+    return fallback === 'hide' ? 'manage' : fallback;
+  }
+  if (rawVal === false) {
+    return 'hide';
+  }
+  return fallback;
+}
 
 function sanitizeRolePermissionMap(
   raw: unknown,
@@ -250,9 +317,30 @@ function sanitizeRolePermissionMap(
   const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const next = { ...fallback };
   for (const key of ALL_PERMISSION_KEYS) {
-    if (typeof src[key] === 'boolean') {
-      next[key] = src[key] as boolean;
+    if (key in src) {
+      next[key] = sanitizePermissionValue(src[key], fallback[key]);
     }
+  }
+  // Backward-compatible fallbacks for newly split sub-keys when migrating old configs
+  if (!('menuOverview' in src) && 'viewConsolidatedState' in src) {
+    next.menuOverview = next.viewConsolidatedState === 'hide' ? 'hide' : next.viewConsolidatedState;
+  }
+  if (!('menuSquadrons' in src) && ('viewUnitDetails' in src || 'manageNominalRoll' in src)) {
+    next.menuSquadrons =
+      next.manageNominalRoll === 'manage' || next.editUnitDisposals === 'manage'
+        ? 'manage'
+        : next.viewUnitDetails === 'hide' && next.manageNominalRoll === 'hide'
+          ? 'hide'
+          : 'view';
+  }
+  if (!('viewUnitUpdateLog' in src) && 'viewUpdateLog' in src) {
+    next.viewUnitUpdateLog = next.viewUpdateLog;
+  }
+  if (!('settingsNotice' in src) && 'manageCloudAndNotice' in src) {
+    next.settingsNotice = next.manageCloudAndNotice;
+  }
+  if (!('settingsHistory' in src) && 'manageCloudAndNotice' in src) {
+    next.settingsHistory = next.manageCloudAndNotice === 'manage' ? 'manage' : next.accessSettings === 'hide' ? 'hide' : 'view';
   }
   return next;
 }
@@ -261,6 +349,7 @@ export function sanitizeRolePermissionsConfig(raw: unknown): RolePermissionsConf
   const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   return {
     SUPER_ADMIN: sanitizeRolePermissionMap(src.SUPER_ADMIN, DEFAULT_ROLE_PERMISSIONS.SUPER_ADMIN),
+    ADMIN: sanitizeRolePermissionMap(src.ADMIN, DEFAULT_ROLE_PERMISSIONS.ADMIN),
     USER: sanitizeRolePermissionMap(src.USER, DEFAULT_ROLE_PERMISSIONS.USER),
     GUEST: sanitizeRolePermissionMap(src.GUEST, DEFAULT_ROLE_PERMISSIONS.GUEST),
   };
@@ -297,13 +386,65 @@ export function getUserRoleByBd(dayState: DayState, bdNo?: string | null): UserR
   return 'USER';
 }
 
+const OVERVIEW_CHILD_KEYS = new Set<RolePermissionKey>([
+  'viewConsolidatedState',
+  'editQuickSqnCount',
+  'editPreparedBy',
+  'exportPrintReport',
+  'viewUpdateLog',
+]);
+
+const SQUADRON_CHILD_KEYS = new Set<RolePermissionKey>([
+  'viewUnitDetails',
+  'editUnitDisposals',
+  'manageNominalRoll',
+  'deleteNominalRollAirman',
+  'viewUnitUpdateLog',
+]);
+
+const SETTINGS_CHILD_KEYS = new Set<RolePermissionKey>([
+  'settingsTheme',
+  'manageWingsAndUnits',
+  'manageUsers',
+  'settingsPermissions',
+  'settingsHistory',
+  'manageCloudAndNotice',
+  'settingsNotice',
+]);
+
+export function getRolePermissionLevel(
+  role: UserRole | 'GUEST',
+  key: RolePermissionKey,
+  config: RolePermissionsConfig
+): PermissionLevel {
+  if (role === 'OWNER') return 'manage';
+  const map = config[role] || DEFAULT_ROLE_PERMISSIONS[role];
+  if (OVERVIEW_CHILD_KEYS.has(key) && map.menuOverview === 'hide') {
+    return 'hide';
+  }
+  if (SQUADRON_CHILD_KEYS.has(key) && map.menuSquadrons === 'hide') {
+    return 'hide';
+  }
+  if (SETTINGS_CHILD_KEYS.has(key) && map.accessSettings === 'hide') {
+    return 'hide';
+  }
+  return map[key] || 'hide';
+}
+
 export function hasRolePermission(
   role: UserRole | 'GUEST',
   key: RolePermissionKey,
   config: RolePermissionsConfig
 ): boolean {
-  if (role === 'OWNER') return true;
-  return Boolean(config[role]?.[key]);
+  return getRolePermissionLevel(role, key, config) !== 'hide';
+}
+
+export function canManageRolePermission(
+  role: UserRole | 'GUEST',
+  key: RolePermissionKey,
+  config: RolePermissionsConfig
+): boolean {
+  return getRolePermissionLevel(role, key, config) === 'manage';
 }
 
 export function loadThemePreference(): ThemePreference {
@@ -1094,6 +1235,7 @@ function normalizeAndMigrateParsedState(parsed: any): DayState {
       TF: 'BTF',
       'Airfield Duty': 'Airfield',
       'CMH/ BNS/ BSH/Qmt': 'CMH',
+      Qmt: 'CMH',
       'AWOL/Detention': 'AWOL',
       'ED/EX PPGF': 'ED',
       'U/C, U/Board': 'U/C',

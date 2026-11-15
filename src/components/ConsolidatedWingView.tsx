@@ -23,6 +23,9 @@ interface ConsolidatedWingViewProps {
   onRequireAuth?: (onSuccess: () => void) => void;
   onEditingChange?: (isEditing: boolean) => void;
   canQuickEdit?: boolean;
+  showPreparedBy?: boolean;
+  lockedUnit?: string;
+  isGuestView?: boolean;
 }
 
 const STANDARD_DISPOSAL_ITEMS = DISPOSAL_OPTIONS.filter((o) => o.value !== '-');
@@ -40,6 +43,9 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   onRequireAuth,
   onEditingChange,
   canQuickEdit = true,
+  showPreparedBy = true,
+  lockedUnit,
+  isGuestView = false,
 }) => {
   const effectivePreparedBy = preparedBy ?? getWingPreparedBy(activeWing, dayState.preparedBy);
   const [editingSqn, setEditingSqn] = useState<string | null>(null);
@@ -286,7 +292,6 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
       counts['CMH'] = row.cmh || 0;
       counts['BNS'] = row.bns || 0;
       counts['BSH'] = row.bsh || 0;
-      counts['Qmt'] = row.quarantine || 0;
       counts['U/C'] = row.uc || 0;
       counts['U/Board'] = row.uBoard || 0;
       counts['Office Duty'] = (row.officeDuty || 0) + (row.canteen || 0) + (row.bakery || 0);
@@ -399,7 +404,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     const cmh = getVal('CMH');
     const bns = getVal('BNS');
     const bsh = getVal('BSH');
-    const quarantine = getVal('Qmt');
+    const quarantine = 0;
     const uc = getVal('U/C');
     const uBoard = getVal('U/Board');
     const officeDuty = getVal('Office Duty');
@@ -902,7 +907,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     { key: 'awolDetention', label: 'AWOL/Detention' },
     { key: 'sickReport', label: 'Sick report' },
     { key: 'edExPpgf', label: 'ED/EX PPGF' },
-    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH/Qmt' },
+    { key: 'cmhBnsBshQmt', label: 'CMH/ BNS/ BSH' },
     { key: 'ucUBoard', label: 'U/C, U/Board' },
     { key: 'officeDuty', label: 'Office Duty' },
     { key: 'aftNiFlgNiDuty', label: 'Aft/Ni flg/Ni Duty' },
@@ -921,6 +926,12 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     <div className="w-full max-w-7xl mx-auto px-4 pb-12 text-[12px]">
       {/* Outer Military Report Card */}
       <div className="bg-[#0b1424] border border-[#1b2a44] rounded-xl p-5 sm:p-7 shadow-2xl relative overflow-hidden">
+        {isGuestView && (
+          <div className="mb-4 px-3.5 py-2 rounded-lg bg-sky-950/40 border border-sky-500/35 text-sky-300 text-[11px] font-semibold text-center">
+            Guest Preview Mode — Format Only (Live unit &amp; personnel data hidden)
+          </div>
+        )}
+
         {/* Document Header */}
         <div className="flex flex-col items-center justify-center text-center mb-2">
           <h2 className="text-sm sm:text-base font-bold tracking-wider text-slate-100 uppercase underline decoration-slate-400 underline-offset-4">
@@ -969,6 +980,8 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
               {units.map((row, idx) => {
                 const summary = rowSummaries[idx];
                 const is155 = row.sqnUnit === '155 UASU BAF';
+                const canOpenRowUnit =
+                  !lockedUnit || row.sqnUnit.toLowerCase() === lockedUnit.toLowerCase();
 
                 return (
                   <tr
@@ -980,37 +993,51 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                     {/* Sqn/Unit */}
                     <td className="px-3 py-2 font-bold text-left whitespace-nowrap border-r border-slate-700/80">
                       <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onSelectUnit(row.sqnUnit)}
-                          className={`text-left hover:underline cursor-pointer ${
-                            is155 ? 'text-emerald-400 font-bold' : 'text-slate-100 hover:text-emerald-300'
-                          }`}
-                          title={`Open ${row.sqnUnit} state & Nominal Roll`}
-                        >
-                          {row.sqnUnit}
-                        </button>
-                        <div className="flex items-center gap-1">
+                        {canOpenRowUnit ? (
                           <button
+                            type="button"
                             onClick={() => onSelectUnit(row.sqnUnit)}
-                            className="text-[10px] bg-emerald-950/80 text-emerald-300 hover:bg-emerald-900 px-1.5 py-0.5 rounded border border-emerald-700/50 cursor-pointer"
+                            className={`text-left hover:underline cursor-pointer ${
+                              is155 ? 'text-emerald-400 font-bold' : 'text-slate-100 hover:text-emerald-300'
+                            }`}
                             title={`Open ${row.sqnUnit} state & Nominal Roll`}
                           >
-                            Details
+                            {row.sqnUnit}
                           </button>
-                          {canQuickEdit && getUnitAirmen(dayState, row.sqnUnit).length === 0 && !is155 && (
+                        ) : (
+                          <span className="text-left text-slate-300 font-semibold">
+                            {row.sqnUnit}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1">
+                          {canOpenRowUnit && (
                             <button
-                              onClick={() =>
-                                onRequireAuth
-                                  ? onRequireAuth(() => startEdit(row))
-                                  : startEdit(row)
-                              }
-                              className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
-                              title="Quick edit squadron count"
+                              type="button"
+                              onClick={() => onSelectUnit(row.sqnUnit)}
+                              className="text-[10px] bg-emerald-950/80 text-emerald-300 hover:bg-emerald-900 px-1.5 py-0.5 rounded border border-emerald-700/50 cursor-pointer"
+                              title={`Open ${row.sqnUnit} state & Nominal Roll`}
                             >
-                              <Edit3 className="w-3 h-3" />
+                              Details
                             </button>
                           )}
+                          {!isGuestView &&
+                            canOpenRowUnit &&
+                            canQuickEdit &&
+                            getUnitAirmen(dayState, row.sqnUnit).length === 0 &&
+                            !is155 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onRequireAuth
+                                    ? onRequireAuth(() => startEdit(row))
+                                    : startEdit(row)
+                                }
+                                className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
+                                title="Quick edit squadron count"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </button>
+                            )}
                         </div>
                       </div>
                     </td>
@@ -1148,24 +1175,36 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
         </div>
 
         {/* Official Prepared By Signature Block below Wing Consolidated State */}
-        <div className="mt-8 pt-2 text-left text-[12px] text-slate-200">
-          <div className="text-slate-300 font-normal mb-14">Prepared By</div>
-          {effectivePreparedBy?.name && (
-            <div className="font-bold text-slate-100 uppercase tracking-wide leading-snug">
-              {effectivePreparedBy.name}
-            </div>
-          )}
-          {effectivePreparedBy?.rank && (
-            <div className="font-bold text-slate-200 uppercase leading-snug">
-              {effectivePreparedBy.rank}
-            </div>
-          )}
-          {effectivePreparedBy?.appointment && (
-            <div className="text-slate-300 uppercase leading-snug">
-              {effectivePreparedBy.appointment}
-            </div>
-          )}
-        </div>
+        {showPreparedBy && (
+          <div className="mt-8 pt-2 text-left text-[12px] text-slate-200">
+            <div className="text-slate-300 font-normal mb-14">Prepared By</div>
+            {isGuestView ? (
+              <div className="space-y-0.5 text-slate-500 italic text-[11px]">
+                <div>[Name]</div>
+                <div>[Rank]</div>
+                <div>[Appointment / Unit]</div>
+              </div>
+            ) : (
+              <>
+                {effectivePreparedBy?.name && (
+                  <div className="font-bold text-slate-100 uppercase tracking-wide leading-snug">
+                    {effectivePreparedBy.name}
+                  </div>
+                )}
+                {effectivePreparedBy?.rank && (
+                  <div className="font-bold text-slate-200 uppercase leading-snug">
+                    {effectivePreparedBy.rank}
+                  </div>
+                )}
+                {effectivePreparedBy?.appointment && (
+                  <div className="text-slate-300 uppercase leading-snug">
+                    {effectivePreparedBy.appointment}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

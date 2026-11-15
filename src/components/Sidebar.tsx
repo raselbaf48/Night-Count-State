@@ -23,6 +23,9 @@ interface SidebarProps {
   operatorRole?: UserRole | 'GUEST';
   brandTitle?: string;
   canAccessSettings?: boolean;
+  showOverview?: boolean;
+  showSquadrons?: boolean;
+  sidebarAllowedUnits?: string[];
   isCollapsed: boolean;
   isMobileOpen: boolean;
   isSettingsOpen: boolean;
@@ -43,6 +46,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   operatorRole = 'USER',
   brandTitle = 'BAF BASE ZHR',
   canAccessSettings = true,
+  showOverview = true,
+  showSquadrons = true,
+  sidebarAllowedUnits,
   isCollapsed,
   isMobileOpen,
   isSettingsOpen,
@@ -131,129 +137,151 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Scrollable Navigation Groups */}
       <nav className="flex-1 overflow-y-auto px-2.5 py-3 space-y-4">
         {/* OVERVIEW GROUP */}
-        <div>
-          {!compact ? (
-            <button
-              type="button"
-              onClick={() => setOverviewOpen((p) => !p)}
-              className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-bold tracking-widest uppercase text-emerald-400/80 hover:text-emerald-300 transition-colors cursor-pointer"
-            >
-              <span>OVERVIEW</span>
-              {overviewOpen ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5" />
-              )}
-            </button>
-          ) : (
-            <div className="h-px bg-[#0d3d2c] mx-2 mb-2" />
-          )}
+        {showOverview && (
+          <div>
+            {!compact ? (
+              <button
+                type="button"
+                onClick={() => setOverviewOpen((p) => !p)}
+                className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-bold tracking-widest uppercase text-emerald-400/80 hover:text-emerald-300 transition-colors cursor-pointer"
+              >
+                <span>OVERVIEW</span>
+                {overviewOpen ? (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5" />
+                )}
+              </button>
+            ) : (
+              <div className="h-px bg-[#0d3d2c] mx-2 mb-2" />
+            )}
 
-          {(overviewOpen || compact) && (
-            <div className="mt-1.5 space-y-1.5">
-              {wings.map((wing) => {
-                const isWingSelected = activeTab === wing.name;
-                return (
-                  <button
-                    key={wing.id}
-                    type="button"
-                    onClick={() => handleNavClick(() => onSelectWing(wing))}
-                    title={`${wing.name} (Consolidated State)`}
-                    className={`w-full flex items-center justify-between gap-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border ${
-                      compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5'
-                    } ${
-                      isWingSelected
-                        ? 'sidebar-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-300/70 text-slate-950 font-bold shadow-md shadow-emerald-950/60'
-                        : 'sidebar-box-btn bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] hover:from-[#105c41] hover:via-[#0b4430] hover:to-[#083626] border-[#175e45] hover:border-emerald-400/50 text-emerald-50 hover:text-white shadow-sm'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2.5 min-w-0">
-                      <Shield className="w-4 h-4 shrink-0" />
-                      {!compact && <span className="truncate">{wing.name}</span>}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+            {(overviewOpen || compact) && (
+              <div className="mt-1.5 space-y-1.5">
+                {wings.map((wing) => {
+                  const isWingSelected = activeTab === wing.name;
+                  return (
+                    <button
+                      key={wing.id}
+                      type="button"
+                      onClick={() => handleNavClick(() => onSelectWing(wing))}
+                      title={`${wing.name} (Consolidated State)`}
+                      className={`w-full flex items-center justify-between gap-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border ${
+                        compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5'
+                      } ${
+                        isWingSelected
+                          ? 'sidebar-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-300/70 text-slate-950 font-bold shadow-md shadow-emerald-950/60'
+                          : 'sidebar-box-btn bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] hover:from-[#105c41] hover:via-[#0b4430] hover:to-[#083626] border-[#175e45] hover:border-emerald-400/50 text-emerald-50 hover:text-white shadow-sm'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2.5 min-w-0">
+                        <Shield className="w-4 h-4 shrink-0" />
+                        {!compact && <span className="truncate">{wing.name}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* SQUADRONS / UNITS GROUP */}
-        <div>
-          {!compact ? (
-            <button
-              type="button"
-              onClick={() => setSquadronsOpen((p) => !p)}
-              className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-bold tracking-widest uppercase text-emerald-400/80 hover:text-emerald-300 transition-colors cursor-pointer"
-            >
-              <span>SQUADRONS / UNITS</span>
-              {squadronsOpen ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5" />
-              )}
-            </button>
-          ) : (
-            <div className="h-px bg-[#0d3d2c] mx-2 mb-2" />
-          )}
+        {showSquadrons && (
+          <div>
+            {!compact ? (
+              <button
+                type="button"
+                onClick={() => setSquadronsOpen((p) => !p)}
+                className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-bold tracking-widest uppercase text-emerald-400/80 hover:text-emerald-300 transition-colors cursor-pointer"
+              >
+                <span>SQUADRONS / UNITS</span>
+                {squadronsOpen ? (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5" />
+                )}
+              </button>
+            ) : (
+              <div className="h-px bg-[#0d3d2c] mx-2 mb-2" />
+            )}
 
-          {(squadronsOpen || compact) && (
-            <div className="mt-1.5 space-y-2.5">
-              {wings.map((wing) => (
-                <div key={`units-grp-${wing.id}`} className="space-y-1.5">
-                  {!compact && wings.length > 1 && (
-                    <div className="px-2.5 pt-1 text-[9px] font-bold tracking-wider uppercase text-amber-400/80">
-                      {wing.name}
-                    </div>
-                  )}
-                  {wing.units.length === 0 ? (
-                    !compact && (
-                      <div className="px-3 py-1.5 text-[11px] text-emerald-400/60 italic">
-                        No Sqn/Unit assigned
-                      </div>
-                    )
-                  ) : (
-                    wing.units.map((unitName) => {
-                      const isActive = activeTab === unitName;
-                      const unitAirmenCount = getUnitAirmen(dayState, unitName).length;
-                      return (
-                        <button
-                          key={unitName}
-                          type="button"
-                          onClick={() => handleNavClick(() => onSelectUnit(unitName, wing.id))}
-                          title={unitName}
-                          className={`w-full flex items-center justify-between gap-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border ${
-                            compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2'
-                          } ${
-                            isActive
-                              ? 'sidebar-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-300/70 text-slate-950 font-bold shadow-md shadow-emerald-950/60'
-                              : 'sidebar-box-btn bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] hover:from-[#105c41] hover:via-[#0b4430] hover:to-[#083626] border-[#175e45] hover:border-emerald-400/50 text-emerald-50 hover:text-white shadow-sm'
-                          }`}
-                        >
-                          <span className="flex items-center gap-2.5 min-w-0">
-                            <Building2 className="w-4 h-4 shrink-0" />
-                            {!compact && <span className="truncate">{unitName}</span>}
-                          </span>
-                          {!compact && unitAirmenCount > 0 && (
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0 ${
+            {(squadronsOpen || compact) && (
+              <div className="mt-1.5 space-y-2.5">
+                {wings.map((wing) => {
+                  const displayUnits = sidebarAllowedUnits
+                    ? wing.units.filter((u) =>
+                        sidebarAllowedUnits.some((au) => au.toLowerCase() === u.toLowerCase())
+                      )
+                    : wing.units;
+
+                  if (sidebarAllowedUnits && displayUnits.length === 0) {
+                    return null;
+                  }
+
+                  return (
+                    <div key={`units-grp-${wing.id}`} className="space-y-1.5">
+                      {!compact && wings.length > 1 && (
+                        <div className="px-2.5 pt-1 text-[9px] font-bold tracking-wider uppercase text-amber-400/80">
+                          {wing.name}
+                        </div>
+                      )}
+                      {displayUnits.length === 0 ? (
+                        !compact && (
+                          <div className="px-3 py-1.5 text-[11px] text-emerald-400/60 italic">
+                            No Sqn/Unit assigned
+                          </div>
+                        )
+                      ) : (
+                        displayUnits.map((unitName) => {
+                          const isActive = activeTab === unitName;
+                          const unitAirmenCount = getUnitAirmen(dayState, unitName).length;
+                          return (
+                            <button
+                              key={unitName}
+                              type="button"
+                              onClick={() => handleNavClick(() => onSelectUnit(unitName, wing.id))}
+                              title={unitName}
+                              className={`w-full flex items-center justify-between gap-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border ${
+                                compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2'
+                              } ${
                                 isActive
-                                  ? 'bg-slate-950/20 text-slate-950'
-                                  : 'bg-[#093d2b] text-emerald-300 border border-[#14553e]'
+                                  ? 'sidebar-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-300/70 text-slate-950 font-bold shadow-md shadow-emerald-950/60'
+                                  : 'sidebar-box-btn bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] hover:from-[#105c41] hover:via-[#0b4430] hover:to-[#083626] border-[#175e45] hover:border-emerald-400/50 text-emerald-50 hover:text-white shadow-sm'
                               }`}
                             >
-                              {unitAirmenCount}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                              <span className="flex items-center gap-2.5 min-w-0">
+                                <Building2 className="w-4 h-4 shrink-0" />
+                                {!compact && <span className="truncate">{unitName}</span>}
+                              </span>
+                              {!compact && unitAirmenCount > 0 && (
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0 ${
+                                    isActive
+                                      ? 'bg-slate-950/20 text-slate-950'
+                                      : 'bg-[#093d2b] text-emerald-300 border border-[#14553e]'
+                                  }`}
+                                >
+                                  {unitAirmenCount}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!showOverview && !showSquadrons && !compact && (
+          <div className="px-3 py-6 text-center text-[11px] text-emerald-400/60 italic">
+            Sidebar menus hidden for this role
+          </div>
+        )}
       </nav>
 
       {/* Bottom Operator & Settings Footer */}
@@ -275,7 +303,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <>
                   <div className="text-xs font-bold text-slate-200 truncate">Guest Mode</div>
                   <div className="text-[10px] font-medium text-emerald-400/80 truncate">
-                    Limited Access
+                    {operatorRole === 'GUEST' ? 'Format Preview Only' : 'Limited Access'}
                   </div>
                 </>
               )}

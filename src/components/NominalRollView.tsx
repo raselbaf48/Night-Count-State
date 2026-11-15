@@ -43,6 +43,8 @@ interface NominalRollViewProps {
   canEditDisposals?: boolean;
   canManageNominalRoll?: boolean;
   canDeleteAirman?: boolean;
+  readOnlyScopeNote?: string;
+  isGuestView?: boolean;
 }
 
 interface DisposalDropdownProps {
@@ -312,6 +314,8 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
   canEditDisposals = true,
   canManageNominalRoll = true,
   canDeleteAirman = true,
+  readOnlyScopeNote,
+  isGuestView = false,
 }) => {
   const [selectedFlight, setSelectedFlight] = useState<string>('All');
   const [selectedTrade, setSelectedTrade] = useState<string>('All');
@@ -741,6 +745,13 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
           </div>
         </div>
 
+        {readOnlyScopeNote && !isGuestView && (
+          <div className="px-6 py-2.5 bg-amber-950/35 border-b border-amber-500/30 text-amber-200 text-xs font-medium flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{readOnlyScopeNote}</span>
+          </div>
+        )}
+
         {!isCollapsed && (
           <div>
             {/* Modern Seamless Controls Bar (No nested box) */}
@@ -828,7 +839,26 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="text-slate-200 divide-y divide-slate-800/40">
-                  {filteredAirmen.length === 0 ? (
+                  {isGuestView ? (
+                    <>
+                      <tr>
+                        <td colSpan={7} className="py-2.5 px-4 bg-sky-950/35 border-b border-sky-500/25 text-center text-[11px] font-semibold text-sky-300">
+                          Guest Preview Mode — Format Only (Personnel roster &amp; BD numbers hidden)
+                        </td>
+                      </tr>
+                      {[1, 2, 3].map((rowNum) => (
+                        <tr key={`guest-nr-${rowNum}`} className="text-slate-500 italic">
+                          <td className="py-3 px-4 text-center text-xs">{rowNum}</td>
+                          <td className="py-3 px-4 text-xs">[6-Digit BD]</td>
+                          <td className="py-3 px-4 text-xs">[Rank]</td>
+                          <td className="py-3 px-4 text-xs">[Short Name]</td>
+                          <td className="py-3 px-4 text-xs">[Trade]</td>
+                          <td className="py-3 px-4 text-xs">[Flight]</td>
+                          <td className="py-3 px-4 text-xs">[Disposal / Duty]</td>
+                        </tr>
+                      ))}
+                    </>
+                  ) : filteredAirmen.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-12 text-center text-slate-500 italic">
                         No airmen match the selected filters
@@ -843,8 +873,14 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                         <tr
                           key={airman.id}
                           onClick={() => handleRowClick(airman)}
-                          className="hover:bg-slate-800/35 transition-colors cursor-pointer group"
-                          title="Click row to edit personnel details"
+                          className={`hover:bg-slate-800/35 transition-colors group ${
+                            canManageNominalRoll ? 'cursor-pointer' : ''
+                          }`}
+                          title={
+                            canManageNominalRoll
+                              ? 'Click row to edit personnel details'
+                              : undefined
+                          }
                         >
                           {/* Ser No */}
                           <td className="py-3 px-4 text-center text-slate-500 text-xs">
@@ -865,7 +901,9 @@ export const NominalRollView: React.FC<NominalRollViewProps> = ({
                           <td className="py-3 px-4 font-semibold text-white text-xs">
                             <div className="flex items-center justify-between gap-1.5 pr-2">
                               <span>{airman.name}</span>
-                              <Edit3 className="w-3 h-3 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              {canManageNominalRoll && (
+                                <Edit3 className="w-3 h-3 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              )}
                             </div>
                           </td>
 

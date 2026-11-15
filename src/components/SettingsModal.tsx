@@ -8,6 +8,7 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   X,
   Search,
   RefreshCw,
@@ -27,12 +28,15 @@ import {
   Moon,
   Lock,
   Edit3,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   Airman,
   DayState,
   LoginHistoryEntry,
   OperatorProfile,
+  PermissionLevel,
   Rank,
   RolePermissionKey,
   RolePermissionsConfig,
@@ -49,9 +53,12 @@ import {
 import {
   ALL_PERMISSION_KEYS,
   DEFAULT_ROLE_PERMISSIONS,
+  canManageRolePermission,
   findExistingBdConflict,
   getAllAirmenAcrossUnits,
   getAllConfiguredUnits,
+  getRolePermissionLevel,
+  hasRolePermission,
 } from '../utils/storage';
 
 export type SettingsTabId =
@@ -76,6 +83,7 @@ interface SettingsModalProps {
   canManageWings: boolean;
   canManageUsers: boolean;
   canManageCloudAndNotice: boolean;
+  isGuestView?: boolean;
   loginHistory: LoginHistoryEntry[];
   onRefreshLoginHistory: () => Promise<void>;
   onClearLoginHistory: () => void;
@@ -119,105 +127,267 @@ const NAV_ITEMS: {
   id: SettingsTabId;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  permKey: RolePermissionKey;
 }[] = [
-  { id: 'theme', label: 'Theme & Appearance', icon: Palette },
-  { id: 'wings', label: 'Wings & Units', icon: Building2 },
-  { id: 'users', label: 'User Management', icon: Users },
-  { id: 'permissions', label: 'Access Control', icon: Lock },
-  { id: 'history', label: 'Login History', icon: History },
-  { id: 'sync', label: 'Database Cloud Sync', icon: Database },
-  { id: 'notice', label: 'App Notice', icon: Megaphone },
+  { id: 'theme', label: 'Theme & Appearance', icon: Palette, permKey: 'settingsTheme' },
+  { id: 'wings', label: 'Wings & Units', icon: Building2, permKey: 'manageWingsAndUnits' },
+  { id: 'users', label: 'User Management', icon: Users, permKey: 'manageUsers' },
+  { id: 'permissions', label: 'Access Control', icon: Lock, permKey: 'settingsPermissions' },
+  { id: 'history', label: 'Login History', icon: History, permKey: 'settingsHistory' },
+  { id: 'sync', label: 'Database Cloud Sync', icon: Database, permKey: 'manageCloudAndNotice' },
+  { id: 'notice', label: 'App Notice', icon: Megaphone, permKey: 'settingsNotice' },
 ];
 
-const PERMISSION_GROUPS: {
-  title: string;
-  subtitle: string;
-  items: { key: RolePermissionKey; label: string; desc: string }[];
-}[] = [
+interface PermissionChildNode {
+  key: RolePermissionKey;
+  label: string;
+  desc: string;
+  allowedLevels: PermissionLevel[];
+}
+
+interface PermissionMenuNode {
+  key: RolePermissionKey;
+  label: string;
+  desc: string;
+  icon: React.ComponentType<{ className?: string }>;
+  allowedLevels: PermissionLevel[];
+  children: PermissionChildNode[];
+}
+
+const SIDEBAR_PERMISSION_TREE: PermissionMenuNode[] = [
   {
-    title: 'State & Consolidated Views',
-    subtitle: 'Control who can view and edit squadron counts & unit disposals',
-    items: [
+    key: 'menuOverview',
+    label: 'Overview (Wing Consolidated)',
+    desc: 'Sidebar Overview section for Wing Consolidated State, Prepared By, Export & Logs',
+    icon: Shield,
+    allowedLevels: ['hide', 'view', 'manage'],
+    children: [
       {
         key: 'viewConsolidatedState',
         label: 'Consolidated Wing State',
-        desc: 'View wing consolidated summary table & strength forecast',
+        desc: 'Wing consolidated summary table & strength forecast',
+        allowedLevels: ['hide', 'view', 'manage'],
       },
       {
         key: 'editQuickSqnCount',
         label: 'Quick Edit Sqn Count',
-        desc: 'Modify squadron strength & disposal counts via Quick Edit page',
-      },
-      {
-        key: 'viewUnitDetails',
-        label: 'Unit Night Count State',
-        desc: 'Open individual Squadron/Unit Night Count detail views',
-      },
-      {
-        key: 'editUnitDisposals',
-        label: 'Edit Unit Disposals & Remarks',
-        desc: 'Toggle parade status, remove disposals & update unit remarks',
-      },
-    ],
-  },
-  {
-    title: 'Nominal Roll, Reports & Logs',
-    subtitle: 'Manage personnel roster actions, print exports, signatures & logs',
-    items: [
-      {
-        key: 'manageNominalRoll',
-        label: 'Manage Nominal Roll (Add / Edit / Disposal)',
-        desc: 'Add airmen, bulk import, edit airman details & assign disposals',
-      },
-      {
-        key: 'deleteNominalRollAirman',
-        label: 'Delete Airman from Nominal Roll',
-        desc: 'Allow removing airman entries from a Squadron Nominal Roll',
+        desc: 'Quick edit squadron strength & disposal counts from Consolidated table',
+        allowedLevels: ['hide', 'view', 'manage'],
       },
       {
         key: 'editPreparedBy',
         label: 'Prepared By Signature',
-        desc: 'Edit duty NCO / clerk Prepared By signature details',
+        desc: 'View or edit Prepared By signature block below Consolidated State',
+        allowedLevels: ['hide', 'view', 'manage'],
       },
       {
         key: 'exportPrintReport',
-        label: 'Print & Export Reports',
-        desc: 'Generate and print official consolidated or unit reports',
+        label: 'Print & Export (Doc / JPG)',
+        desc: 'View = Print Preview & Print only; Manage = Full Print, Export Doc & JPG',
+        allowedLevels: ['hide', 'view', 'manage'],
       },
       {
         key: 'viewUpdateLog',
-        label: 'State Update Log',
-        desc: 'View audit log showing who updated Night Count state',
+        label: 'Wing State Update Log',
+        desc: 'View audit log showing who updated Consolidated Wing state',
+        allowedLevels: ['hide', 'view'],
       },
     ],
   },
   {
-    title: 'Settings & Administration',
-    subtitle: 'Restrict Settings panels, Wing/Unit creation, Directory & Cloud Sync',
-    items: [
+    key: 'menuSquadrons',
+    label: 'Squadrons / Units',
+    desc: 'Sidebar Squadrons / Units section for individual Sqn Night Count State & Nominal Roll',
+    icon: Building2,
+    allowedLevels: ['hide', 'view', 'manage'],
+    children: [
       {
-        key: 'accessSettings',
-        label: 'Open Settings Panel',
-        desc: 'Allow opening Settings from the sidebar (Theme, View Info)',
+        key: 'viewUnitDetails',
+        label: 'Unit Night Count State',
+        desc: 'Open individual Squadron/Unit Night Count detail tables',
+        allowedLevels: ['hide', 'view', 'manage'],
+      },
+      {
+        key: 'editUnitDisposals',
+        label: 'Unit Disposals & Remarks',
+        desc: 'Toggle parade status, clear disposals & edit unit remarks',
+        allowedLevels: ['hide', 'view', 'manage'],
+      },
+      {
+        key: 'manageNominalRoll',
+        label: 'Nominal Roll (Add / Edit / Disposal)',
+        desc: 'View Nominal Roll or Add/Import/Edit airmen & assign disposals',
+        allowedLevels: ['hide', 'view', 'manage'],
+      },
+      {
+        key: 'deleteNominalRollAirman',
+        label: 'Delete Airman from Nominal Roll',
+        desc: 'Remove airman entries from a Squadron Nominal Roll',
+        allowedLevels: ['hide', 'view', 'manage'],
+      },
+      {
+        key: 'viewUnitUpdateLog',
+        label: 'Unit Update Log',
+        desc: 'View per-unit Update Log tab inside Squadron/Unit views',
+        allowedLevels: ['hide', 'view'],
+      },
+    ],
+  },
+  {
+    key: 'accessSettings',
+    label: 'Settings',
+    desc: 'Sidebar Settings menu & sub-pages (Theme, Wings, Users, Access Control, Sync, Notice)',
+    icon: Settings,
+    allowedLevels: ['hide', 'view', 'manage'],
+    children: [
+      {
+        key: 'settingsTheme',
+        label: 'Theme & Appearance',
+        desc: 'View or switch between System, Light & Dark themes',
+        allowedLevels: ['hide', 'view', 'manage'],
       },
       {
         key: 'manageWingsAndUnits',
-        label: 'Manage Squadrons / Units',
-        desc: 'Add, edit office Name/Wing, or remove Squadrons/Units in Settings',
+        label: 'Wings & Units',
+        desc: 'View wings/units or Manage (Add / Rename / Remove units)',
+        allowedLevels: ['hide', 'view', 'manage'],
       },
       {
         key: 'manageUsers',
-        label: 'Manage User Directory (Add / Edit / Remove)',
-        desc: 'Add, edit profile/PIN, or remove users in User Management',
+        label: 'User Management',
+        desc: 'View User Directory or Add / Edit Profile / PIN / Remove users',
+        allowedLevels: ['hide', 'view', 'manage'],
+      },
+      {
+        key: 'settingsPermissions',
+        label: 'Access Control',
+        desc: 'View role access rules (Editing always stays Owner-only)',
+        allowedLevels: ['hide', 'view'],
+      },
+      {
+        key: 'settingsHistory',
+        label: 'Login History',
+        desc: 'View Login History or Clear history records',
+        allowedLevels: ['hide', 'view', 'manage'],
       },
       {
         key: 'manageCloudAndNotice',
-        label: 'Cloud Sync, App Notice & Login History',
-        desc: 'Manual Cloud sync, publish App Notice, and clear Login History',
+        label: 'Database Cloud Sync',
+        desc: 'View/Refresh Cloud status or Upload & Sync state to Cloud',
+        allowedLevels: ['hide', 'view', 'manage'],
+      },
+      {
+        key: 'settingsNotice',
+        label: 'App Notice',
+        desc: 'View current operational notice or Publish / Clear App Notice',
+        allowedLevels: ['hide', 'view', 'manage'],
       },
     ],
   },
 ];
+
+type ConfigurableRole = 'SUPER_ADMIN' | 'ADMIN' | 'USER' | 'GUEST';
+
+const ROLE_ACCESS_GUIDE: Record<
+  ConfigurableRole,
+  {
+    headline: string;
+    scopeBadge: string;
+    plainSummary: string;
+    workflowSteps: string[];
+  }
+> = {
+  USER: {
+    headline: 'USER — শুধুমাত্র নিজের অফিসের Nominal Roll Manage',
+    scopeBadge: 'Own Office Nominal Roll Only',
+    plainSummary:
+      'User শুধুমাত্র নিজের অফিস/Sqn-এর Nominal Roll ম্যানেজ করতে পারবে (Add, Edit ও Disposal আপডেট)। নিজের Wing-এর Consolidated State শুধু দেখতে ও প্রিন্ট করতে পারবে, তবে Quick Edit Sqn Count বা অন্য অফিসের কোনো ডেটা অ্যাক্সেস করতে পারবে না।',
+    workflowSteps: [
+      'Own Office Only: শুধু নিজের Sqn/Unit-এর Nominal Roll-এ Airman Add/Edit ও Disposal দিতে পারবে।',
+      'Overview View-Only: নিজের Wing-এর Consolidated State ও Update Log শুধু দেখতে ও Print/Export করতে পারবে।',
+      'No Cross-Office / Quick Edit: অন্য অফিসের State, Quick Edit Sqn Count, Prepared By বা Admin সেটিংস লুকানো থাকবে।',
+    ],
+  },
+  ADMIN: {
+    headline: 'ADMIN — নিজের অফিসের Nominal Roll + নিজের Wing-এর Quick Edit Sqn Count',
+    scopeBadge: 'Own Office Nominal Roll + Own Wing Quick Edit',
+    plainSummary:
+      'Admin নিজের অফিস/Sqn-এর Nominal Roll ম্যানেজ করতে পারবে এবং পাশাপাশি নিজের Wing-এর সব Sqn/Unit-এর Quick Edit Sqn Count করতে পারবে। নিজের Wing-এর অন্যান্য অফিসের State দেখতে পারবে, কিন্তু অন্য অফিসের Nominal Roll এডিট করতে পারবে না।',
+    workflowSteps: [
+      'Own Office Nominal Roll: শুধু নিজের অফিসের Nominal Roll (Add, Edit, Delete ও Disposal) ম্যানেজ করতে পারবে।',
+      'Own Wing Quick Edit Sqn Count: নিজের Wing-এর Consolidated State থেকে যেকোনো Sqn-এর Quick Edit Count করতে পারবে।',
+      'Other Wing Squadrons View-Only: নিজের Wing-এর অন্য Sqn-এর State/Nominal Roll শুধু দেখতে পারবে (অন্য Wing ও অন্য অফিসের Nominal Roll এডিট লক থাকবে)।',
+    ],
+  },
+  SUPER_ADMIN: {
+    headline: 'SUPER_ADMIN — সকল Wing ও সকল Sqn/Unit পরিচালনা',
+    scopeBadge: 'All Wings & All Units',
+    plainSummary:
+      'Super Admin সব Wing এবং সব Sqn/Unit-এর Consolidated State, Quick Edit Sqn Count, Nominal Roll, User Management, Cloud Sync ও App Notice ম্যানেজ করতে পারবে। শুধুমাত্র Access Control পরিবর্তন ও Role নির্ধারণ Owner-এর জন্য সংরক্ষিত।',
+    workflowSteps: [
+      'All Wings & Units: সকল Wing-এর Consolidated State ও সব Sqn-এর Nominal Roll পূর্ণ নিয়ন্ত্রণ।',
+      'System Operations: Wings/Units, Users, Login History, Cloud Sync ও App Notice পরিচালনা।',
+      'Owner Reserve: Access Control পরিবর্তন ও নতুন Role নির্ধারণ শুধুমাত্র Owner করতে পারবে।',
+    ],
+  },
+  GUEST: {
+    headline: 'GUEST — Format-Only Preview (ডেটাবিহীন ডেমো)',
+    scopeBadge: 'Format Preview Only',
+    plainSummary:
+      'Guest মোডে লগইন করলে কোনো আসল পার্সোনেল ডেটা, BD নম্বর বা অফিস কাউন্ট দেখাবে না—শুধু অ্যাপের সব টেবিল ও প্রিন্ট ফরম্যাট দেখানো হবে যাতে যে কেউ সিস্টেমটি কীভাবে কাজ করে তা সহজে বুঝতে পারে।',
+    workflowSteps: [
+      'No Real Data Shown: কোনো Airman-এর নাম, BD বা অফিসের প্রকৃত সংখ্যা লোড বা প্রদর্শিত হয় না।',
+      'Read-Only Preview: Consolidated State, Unit State ও Nominal Roll-এর কাঠামো ও Print ফরম্যাট দেখা যায়।',
+    ],
+  },
+};
+
+function getRolePermissionScopeHint(
+  role: ConfigurableRole,
+  key: RolePermissionKey
+): string | null {
+  if (role === 'USER') {
+    if (
+      key === 'manageNominalRoll' ||
+      key === 'editUnitDisposals' ||
+      key === 'deleteNominalRollAirman' ||
+      key === 'viewUnitDetails' ||
+      key === 'viewUnitUpdateLog' ||
+      key === 'menuSquadrons'
+    ) {
+      return 'Own Office Only';
+    }
+    if (
+      key === 'menuOverview' ||
+      key === 'viewConsolidatedState' ||
+      key === 'viewUpdateLog'
+    ) {
+      return 'Own Wing Only';
+    }
+  }
+  if (role === 'ADMIN') {
+    if (
+      key === 'manageNominalRoll' ||
+      key === 'editUnitDisposals' ||
+      key === 'deleteNominalRollAirman'
+    ) {
+      return 'Own Office Only';
+    }
+    if (
+      key === 'menuOverview' ||
+      key === 'viewConsolidatedState' ||
+      key === 'editQuickSqnCount' ||
+      key === 'editPreparedBy' ||
+      key === 'viewUpdateLog' ||
+      key === 'menuSquadrons' ||
+      key === 'viewUnitDetails' ||
+      key === 'viewUnitUpdateLog'
+    ) {
+      return 'Own Wing Scope';
+    }
+  }
+  return null;
+}
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -232,6 +402,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   canManageWings,
   canManageUsers,
   canManageCloudAndNotice,
+  isGuestView = false,
   loginHistory,
   onRefreshLoginHistory,
   onClearLoginHistory,
@@ -293,9 +464,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   } | null>(null);
 
   // Access Control state
-  const [selectedPermRole, setSelectedPermRole] = useState<'SUPER_ADMIN' | 'USER' | 'GUEST'>(
-    'SUPER_ADMIN'
-  );
+  const [selectedPermRole, setSelectedPermRole] = useState<
+    'SUPER_ADMIN' | 'ADMIN' | 'USER' | 'GUEST'
+  >('SUPER_ADMIN');
+  const [expandedMenuGroups, setExpandedMenuGroups] = useState<Record<string, boolean>>({
+    menuOverview: true,
+    menuSquadrons: true,
+    accessSettings: true,
+  });
   const [permFeedback, setPermFeedback] = useState<string | null>(null);
 
   // Wings & Units state
@@ -326,19 +502,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [noticeSavedFeedback, setNoticeSavedFeedback] = useState(false);
 
   const isOwner = operatorRole === 'OWNER';
-  const isLimitedSettingsUser = operatorRole === 'USER' || operatorRole === 'GUEST';
-  const visibleNavItems = isLimitedSettingsUser
-    ? NAV_ITEMS.filter((item) => item.id === 'theme' || item.id === 'wings')
-    : NAV_ITEMS;
+  const visibleNavItems = isOwner
+    ? NAV_ITEMS
+    : NAV_ITEMS.filter((item) => hasRolePermission(operatorRole, item.permKey, rolePermissions));
 
   useEffect(() => {
     if (isOpen) {
-      const nextInitialTab =
-        isLimitedSettingsUser && initialTab !== 'theme' && initialTab !== 'wings'
-          ? 'theme'
-          : initialTab;
+      const nextInitialTab = visibleNavItems.some((n) => n.id === initialTab)
+        ? initialTab
+        : visibleNavItems[0]?.id || 'theme';
       setActiveTab(nextInitialTab);
-      setIsMobileDetailOpen(initialTab !== 'theme');
+      setIsMobileDetailOpen(nextInitialTab !== 'theme');
       setNoticeDraft(appNotice);
       setConfirmClearHistory(false);
       setConfirmDeleteUserId(null);
@@ -356,7 +530,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     // Only reset modal state when opening or when initialTab/role changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialTab, isLimitedSettingsUser]);
+  }, [isOpen, initialTab, operatorRole]);
 
   useEffect(() => {
     if (wings.length > 0) {
@@ -371,24 +545,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const canEditUsers = !isLimitedSettingsUser && (isOwner || canManageUsers);
-  const canEditWings = !isLimitedSettingsUser && (isOwner || canManageWings);
-  const canEditCloudAndNotice = !isLimitedSettingsUser && (isOwner || canManageCloudAndNotice);
+  const canEditTheme = isOwner || canManageRolePermission(operatorRole, 'settingsTheme', rolePermissions);
+  const canEditUsers =
+    !isGuestView &&
+    (isOwner ||
+      (canManageUsers && canManageRolePermission(operatorRole, 'manageUsers', rolePermissions)));
+  const canEditWings =
+    !isGuestView &&
+    (isOwner ||
+      (canManageWings &&
+        canManageRolePermission(operatorRole, 'manageWingsAndUnits', rolePermissions)));
+  const canClearHistory =
+    !isGuestView &&
+    (isOwner || canManageRolePermission(operatorRole, 'settingsHistory', rolePermissions));
+  const canUploadCloudSync =
+    !isGuestView &&
+    (isOwner ||
+      (canManageCloudAndNotice &&
+        canManageRolePermission(operatorRole, 'manageCloudAndNotice', rolePermissions)));
+  const canPullCloudSync =
+    !isGuestView &&
+    (isOwner || hasRolePermission(operatorRole, 'manageCloudAndNotice', rolePermissions));
+  const canEditAppNotice =
+    !isGuestView &&
+    (isOwner || canManageRolePermission(operatorRole, 'settingsNotice', rolePermissions));
 
-  const resolvedActiveTab: SettingsTabId = visibleNavItems.some((n) => n.id === activeTab)
+  const resolvedActiveTab: SettingsTabId | null = visibleNavItems.some((n) => n.id === activeTab)
     ? activeTab
-    : 'theme';
-  const activeNav = visibleNavItems.find((n) => n.id === resolvedActiveTab) || visibleNavItems[0];
+    : visibleNavItems[0]?.id || null;
+  const activeNav = resolvedActiveTab
+    ? visibleNavItems.find((n) => n.id === resolvedActiveTab) || visibleNavItems[0]
+    : null;
   const allConfiguredUnits = getAllConfiguredUnits(wings);
 
   const getWingForUnit = (unitName: string): WingConfig | undefined =>
     wings.find((w) => w.units.some((u) => u.toLowerCase() === unitName.toLowerCase()));
 
-  // Overall Users aggregated across configured Squadrons / Units (scoped to unit for restricted USER)
+  // Overall Users aggregated across configured Squadrons / Units (scoped to unit for USER, or Wing for ADMIN)
   const rawAllUsers = getAllAirmenAcrossUnits(dayState, wings);
+  const configuredUnitSet = new Set(allConfiguredUnits.map((u) => u.toLowerCase()));
   const allUsers = restrictedUnitName
     ? rawAllUsers.filter((u) => u.unit.toLowerCase() === restrictedUnitName.toLowerCase())
-    : rawAllUsers;
+    : operatorRole === 'ADMIN'
+      ? rawAllUsers.filter((u) => configuredUnitSet.has(u.unit.toLowerCase()))
+      : rawAllUsers;
+  const effectiveNewUserUnit = allConfiguredUnits.includes(newUserUnit)
+    ? newUserUnit
+    : allConfiguredUnits[0] || newUserUnit;
   const distinctFlights = Array.from(
     new Set([
       ...BAF_FLIGHTS,
@@ -530,14 +733,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         bdNo: cleanBd,
         trade: newUserTrade,
         flight: newUserFlight,
-        unit: newUserUnit,
+        unit: effectiveNewUserUnit,
         role: assignedRole,
         ...(cleanPin ? { adminPin: cleanPin } : {}),
         status: 'on_parade',
       });
       setUserActionFeedback({
         type: 'ok',
-        text: `Added ${newUserRank} ${cleanName} (BD/${cleanBd}) to ${newUserUnit}.`,
+        text: `Added ${newUserRank} ${cleanName} (BD/${cleanBd}) to ${effectiveNewUserUnit}.`,
       });
       setNewUserName('');
       setNewUserBdNo('');
@@ -624,33 +827,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
   };
 
-  const handleToggleRolePermission = (key: RolePermissionKey) => {
+  const toggleExpandMenuGroup = (menuKey: RolePermissionKey) => {
+    setExpandedMenuGroups((prev) => ({
+      ...prev,
+      [menuKey]: !(prev[menuKey] ?? true),
+    }));
+  };
+
+  const handleSetPermissionLevel = (
+    key: RolePermissionKey,
+    level: PermissionLevel,
+    parentKey?: RolePermissionKey
+  ) => {
     if (!isOwner) return;
+    const updatedRoleMap = { ...rolePermissions[selectedPermRole] };
+    updatedRoleMap[key] = level;
+
+    // Parent menu node synchronization
+    const parentNode = SIDEBAR_PERMISSION_TREE.find((m) => m.key === key);
+    if (parentNode) {
+      if (level === 'view') {
+        parentNode.children.forEach((child) => {
+          if (updatedRoleMap[child.key] === 'manage') {
+            updatedRoleMap[child.key] = 'view';
+          }
+        });
+      } else if (level === 'manage') {
+        // Ensure parent expansion opens so Owner can fine-tune sub-options if desired
+        setExpandedMenuGroups((prev) => ({ ...prev, [key]: true }));
+        parentNode.children.forEach((child) => {
+          if (updatedRoleMap[child.key] === 'hide') {
+            updatedRoleMap[child.key] = child.allowedLevels.includes('manage') ? 'manage' : 'view';
+          }
+        });
+      }
+    }
+
+    // If enabling a child while parent menu is hidden, promote parent menu automatically
+    if (parentKey && level !== 'hide' && updatedRoleMap[parentKey] === 'hide') {
+      updatedRoleMap[parentKey] = level === 'manage' ? 'manage' : 'view';
+    } else if (parentKey && level === 'manage' && updatedRoleMap[parentKey] === 'view') {
+      updatedRoleMap[parentKey] = 'manage';
+    }
+
     const nextConfig: RolePermissionsConfig = {
       ...rolePermissions,
-      [selectedPermRole]: {
-        ...rolePermissions[selectedPermRole],
-        [key]: !rolePermissions[selectedPermRole][key],
-      },
+      [selectedPermRole]: updatedRoleMap,
     };
     onSaveRolePermissions(nextConfig);
     setPermFeedback(`Updated ${selectedPermRole} permissions & synced to Cloud.`);
   };
 
-  const handleApplyPermissionPreset = (mode: 'all' | 'viewOnly' | 'default') => {
+  const handleApplyPermissionPreset = (mode: 'manageAll' | 'viewAll' | 'hideAll' | 'default') => {
     if (!isOwner) return;
     let updatedRoleMap = { ...rolePermissions[selectedPermRole] };
-    if (mode === 'all') {
-      ALL_PERMISSION_KEYS.forEach((k) => {
-        updatedRoleMap[k] = true;
+    if (mode === 'manageAll') {
+      SIDEBAR_PERMISSION_TREE.forEach((menu) => {
+        updatedRoleMap[menu.key] = 'manage';
+        menu.children.forEach((child) => {
+          updatedRoleMap[child.key] = child.allowedLevels.includes('manage') ? 'manage' : 'view';
+        });
       });
-    } else if (mode === 'viewOnly') {
+    } else if (mode === 'viewAll') {
       ALL_PERMISSION_KEYS.forEach((k) => {
-        updatedRoleMap[k] =
-          k === 'viewConsolidatedState' ||
-          k === 'viewUnitDetails' ||
-          k === 'viewUpdateLog' ||
-          k === 'exportPrintReport';
+        updatedRoleMap[k] = 'view';
+      });
+    } else if (mode === 'hideAll') {
+      ALL_PERMISSION_KEYS.forEach((k) => {
+        updatedRoleMap[k] = 'hide';
       });
     } else {
       updatedRoleMap = { ...DEFAULT_ROLE_PERMISSIONS[selectedPermRole] };
@@ -659,9 +903,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       ...rolePermissions,
       [selectedPermRole]: updatedRoleMap,
     });
-    setPermFeedback(
-      `Applied ${mode === 'all' ? 'Allow All' : mode === 'viewOnly' ? 'View Only' : 'Default'} preset to ${selectedPermRole}.`
-    );
+    const presetLabel =
+      mode === 'manageAll'
+        ? 'All Manage'
+        : mode === 'viewAll'
+          ? 'All View'
+          : mode === 'hideAll'
+            ? 'All Hide'
+            : 'Default';
+    setPermFeedback(`Applied ${presetLabel} preset to ${selectedPermRole}.`);
   };
 
   const handleUploadSync = async () => {
@@ -813,7 +1063,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <h2 className="text-base sm:text-lg font-bold text-white tracking-tight truncate">
-                {activeNav.label}
+                {activeNav?.label || 'Settings'}
               </h2>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -864,14 +1114,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          <div key={resolvedActiveTab} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 animate-tab-enter">
+          <div key={resolvedActiveTab || 'none'} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 animate-tab-enter">
+            {!resolvedActiveTab && (
+              <div className="bg-[#101c31] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                <div className="text-sm font-bold text-white">No Settings Panels Available</div>
+                <div className="text-xs text-slate-400">
+                  All Settings sub-options are currently set to Hide for {operatorRole}.
+                </div>
+              </div>
+            )}
+
             {/* TAB: THEME & APPEARANCE */}
             {resolvedActiveTab === 'theme' && (
               <div className="space-y-4">
                 <div className="bg-[#101c31] border border-[#1d2e4c] rounded-2xl p-5 space-y-4">
-                  <div className="flex items-center gap-2.5 text-sm font-bold text-white">
-                    <Palette className="w-4 h-4 text-indigo-400" />
-                    <span>Theme Preference</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 text-sm font-bold text-white">
+                      <Palette className="w-4 h-4 text-indigo-400" />
+                      <span>Theme Preference</span>
+                    </div>
+                    {!canEditTheme && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-600/25 border border-sky-500/40 text-sky-300 text-[10px] font-bold uppercase">
+                        <Eye className="w-3 h-3" />
+                        View Only
+                      </span>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {(
@@ -887,8 +1155,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <button
                           key={opt.id}
                           type="button"
-                          onClick={() => onChangeThemePref(opt.id)}
-                          className={`flex flex-col items-center justify-center gap-2.5 px-4 py-5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                          disabled={!canEditTheme}
+                          onClick={() => canEditTheme && onChangeThemePref(opt.id)}
+                          className={`flex flex-col items-center justify-center gap-2.5 px-4 py-5 rounded-xl border text-xs font-bold transition-all ${
+                            canEditTheme ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
+                          } ${
                             active
                               ? 'bg-[#161e3e] border-indigo-500 text-indigo-300 shadow-[0_0_18px_rgba(99,102,241,0.22)]'
                               : 'bg-[#09111f] border-[#1e3150] text-slate-300 hover:text-white hover:border-[#2e456e]'
@@ -1451,9 +1722,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               onChange={(e) => setEditRole(e.target.value as UserRole)}
                               className="w-full bg-[#060d1b] border border-[#1e3150] focus:border-emerald-500/60 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              <option value="USER">USER</option>
-                              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
                               <option value="OWNER">OWNER</option>
+                              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                              <option value="ADMIN">ADMIN</option>
+                              <option value="USER">USER</option>
                             </select>
                           </div>
 
@@ -1689,6 +1961,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <option value="ALL">All Roles</option>
                           <option value="OWNER">OWNER</option>
                           <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                          <option value="ADMIN">ADMIN</option>
                           <option value="USER">USER</option>
                         </select>
 
@@ -1746,7 +2019,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               Sqn / Unit
                             </label>
                             <select
-                              value={newUserUnit}
+                              value={effectiveNewUserUnit}
                               onChange={(e) => setNewUserUnit(e.target.value)}
                               className="w-full bg-[#09111f] border border-[#1e3150] rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
                             >
@@ -1843,9 +2116,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               onChange={(e) => setNewUserRole(e.target.value as UserRole)}
                               className="w-full bg-[#09111f] border border-[#1e3150] rounded-lg px-2.5 py-1.5 text-xs text-white outline-none disabled:opacity-50"
                             >
-                              <option value="USER">USER</option>
-                              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
                               <option value="OWNER">OWNER</option>
+                              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                              <option value="ADMIN">ADMIN</option>
+                              <option value="USER">USER</option>
                             </select>
                           </div>
                           <div className="sm:col-span-2">
@@ -1913,7 +2187,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   ? 'bg-purple-600/30 border-purple-500/50 text-purple-300'
                                   : userRole === 'SUPER_ADMIN'
                                     ? 'bg-amber-700/35 border-amber-500/50 text-amber-300'
-                                    : 'bg-[#1a2742] border-[#2c3f66] text-slate-300';
+                                    : userRole === 'ADMIN'
+                                      ? 'bg-sky-600/25 border-sky-500/50 text-sky-300'
+                                      : 'bg-[#1a2742] border-[#2c3f66] text-slate-300';
 
                               return (
                                 <tr
@@ -1956,7 +2232,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </>
             )}
 
-            {/* TAB: ACCESS CONTROL (OWNER-ONLY ROLE LIMITATION SWITCHES) */}
+            {/* TAB: ACCESS CONTROL (SIDEBAR MENU TREE WITH HIDE / VIEW / MANAGE) */}
             {resolvedActiveTab === 'permissions' && (
               <div className="space-y-4">
                 <div
@@ -1980,13 +2256,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                       <div className="text-[11px] opacity-85 mt-0.5">
                         {isOwner
-                          ? 'Toggle Switch On/Off to set exact feature limitations for each role. OWNER always keeps unrestricted access.'
-                          : 'Only an account with OWNER role can modify role access limitations.'}
+                          ? 'Set Hide, View, or Manage for every Sidebar menu and expand arrows to customize nested sub-options. OWNER always keeps full Manage access.'
+                          : 'Only an account with OWNER role can modify role access permissions.'}
                       </div>
                     </div>
                   </div>
                   <span className="px-2.5 py-1 rounded-md bg-purple-600/30 border border-purple-500/50 text-[10px] font-extrabold text-purple-200 uppercase tracking-wider">
-                    OWNER: Full Access
+                    OWNER: Full Manage
                   </span>
                 </div>
 
@@ -1995,14 +2271,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="flex flex-wrap items-center gap-1.5">
                     {(
                       [
-                        { id: 'SUPER_ADMIN' as const, label: 'SUPER_ADMIN', badge: 'amber' },
-                        { id: 'USER' as const, label: 'USER', badge: 'slate' },
-                        { id: 'GUEST' as const, label: 'GUEST', badge: 'sky' },
+                        { id: 'SUPER_ADMIN' as const, label: 'SUPER_ADMIN' },
+                        { id: 'ADMIN' as const, label: 'ADMIN' },
+                        { id: 'USER' as const, label: 'USER' },
+                        { id: 'GUEST' as const, label: 'GUEST' },
                       ] as const
                     ).map((rTab) => {
                       const isSel = selectedPermRole === rTab.id;
-                      const enabledCount = ALL_PERMISSION_KEYS.filter(
-                        (k) => rolePermissions[rTab.id]?.[k]
+                      const activeCount = ALL_PERMISSION_KEYS.filter(
+                        (k) => getRolePermissionLevel(rTab.id, k, rolePermissions) !== 'hide'
                       ).length;
                       return (
                         <button
@@ -2020,7 +2297,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         >
                           <span>{rTab.label}</span>
                           <span className="px-1.5 py-0.5 rounded bg-black/35 text-[10px] tabular-nums text-emerald-300">
-                            {enabledCount}/{ALL_PERMISSION_KEYS.length}
+                            {activeCount}/{ALL_PERMISSION_KEYS.length}
                           </span>
                         </button>
                       );
@@ -2031,17 +2308,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleApplyPermissionPreset('all')}
-                        className="px-2.5 py-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold cursor-pointer"
+                        onClick={() => handleApplyPermissionPreset('manageAll')}
+                        className="px-2.5 py-1.5 rounded-lg bg-emerald-600/25 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold cursor-pointer"
                       >
-                        Switch All On
+                        All Manage
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleApplyPermissionPreset('viewOnly')}
-                        className="px-2.5 py-1.5 rounded-lg bg-[#0c172b] hover:bg-[#142544] border border-[#243b61] text-slate-200 text-[11px] font-bold cursor-pointer"
+                        onClick={() => handleApplyPermissionPreset('viewAll')}
+                        className="px-2.5 py-1.5 rounded-lg bg-sky-600/25 hover:bg-sky-950/60 border border-sky-500/40 text-sky-300 text-[11px] font-bold cursor-pointer"
                       >
-                        View Only
+                        All View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleApplyPermissionPreset('hideAll')}
+                        className="px-2.5 py-1.5 rounded-lg bg-rose-600/25 hover:bg-rose-950/60 border border-rose-500/40 text-rose-300 text-[11px] font-bold cursor-pointer"
+                      >
+                        All Hide
                       </button>
                       <button
                         type="button"
@@ -2061,60 +2345,320 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 )}
 
-                {/* Permission Switch Groups */}
-                <div className="space-y-3">
-                  {PERMISSION_GROUPS.map((group) => (
-                    <div
-                      key={group.title}
-                      className="bg-[#101c31] border border-[#1d2e4c] rounded-xl overflow-hidden"
-                    >
-                      <div className="px-4 py-3 bg-[#0d1729] border-b border-[#182844]">
-                        <div className="text-xs font-bold text-white">{group.title}</div>
-                        <div className="text-[11px] text-slate-400">{group.subtitle}</div>
+                {/* Clear Role Scope & Live Permission Breakdown Card */}
+                {(() => {
+                  const roleGuide = ROLE_ACCESS_GUIDE[selectedPermRole];
+                  const childNodes = SIDEBAR_PERMISSION_TREE.flatMap((menu) =>
+                    menu.children.map((child) => ({
+                      ...child,
+                      menuLabel: menu.label.split(' (')[0],
+                      effectiveLevel: getRolePermissionLevel(
+                        selectedPermRole,
+                        child.key,
+                        rolePermissions
+                      ),
+                      scopeHint: getRolePermissionScopeHint(selectedPermRole, child.key),
+                    }))
+                  );
+                  const manageItems = childNodes.filter((c) => c.effectiveLevel === 'manage');
+                  const viewItems = childNodes.filter((c) => c.effectiveLevel === 'view');
+                  const hiddenItems = childNodes.filter((c) => c.effectiveLevel === 'hide');
+
+                  return (
+                    <div className="bg-[#0d1729] border border-indigo-500/35 rounded-xl p-4 space-y-3.5">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs sm:text-sm font-extrabold text-white">
+                              {roleGuide.headline}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-indigo-950/40 border border-indigo-500/40 text-indigo-300 text-[10px] font-bold uppercase tracking-wide">
+                              {roleGuide.scopeBadge}
+                            </span>
+                          </div>
+                          <p className="text-[11px] sm:text-xs text-slate-300 mt-1.5 leading-relaxed">
+                            {roleGuide.plainSummary}
+                          </p>
+                        </div>
                       </div>
-                      <div className="divide-y divide-[#17253e]">
-                        {group.items.map((item) => {
-                          const enabled = Boolean(rolePermissions[selectedPermRole]?.[item.key]);
-                          return (
-                            <div
-                              key={item.key}
-                              className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-[#122039]/60 transition-colors"
-                            >
-                              <div className="min-w-0">
-                                <div className="text-xs font-semibold text-white">
-                                  {item.label}
-                                </div>
-                                <div className="text-[11px] text-slate-400 mt-0.5">
-                                  {item.desc}
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                role="switch"
-                                aria-checked={enabled}
-                                aria-label={`Toggle ${item.label} for ${selectedPermRole}`}
-                                disabled={!isOwner}
-                                onClick={() => handleToggleRolePermission(item.key)}
-                                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors ${
-                                  isOwner ? 'cursor-pointer' : 'cursor-not-allowed opacity-55'
-                                } ${
-                                  enabled
-                                    ? 'bg-emerald-500 border-emerald-400'
-                                    : 'bg-[#09111f] border-[#263c63]'
-                                }`}
-                              >
-                                <span
-                                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                                    enabled ? 'translate-x-6' : 'translate-x-1'
-                                  }`}
-                                />
-                              </button>
-                            </div>
-                          );
-                        })}
+
+                      {/* Key Scope Rules */}
+                      <div className="bg-[#09111f] border border-[#1d2e4c] rounded-lg px-3 py-2.5 space-y-1">
+                        {roleGuide.workflowSteps.map((step, idx) => (
+                          <div
+                            key={`${selectedPermRole}-rule-${idx}`}
+                            className="flex items-start gap-2 text-[11px] text-slate-300 leading-relaxed"
+                          >
+                            <span className="text-emerald-400 font-bold shrink-0">•</span>
+                            <span>{step}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Live Breakdown Grid (Manage / View Only / Hidden) */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                        {/* Manage Column */}
+                        <div className="bg-[#09111f] border border-emerald-500/30 rounded-lg p-2.5 space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px] font-bold text-emerald-300">
+                            <span className="inline-flex items-center gap-1.5">
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Manage ({manageItems.length})</span>
+                            </span>
+                          </div>
+                          {manageItems.length === 0 ? (
+                            <div className="text-[11px] text-slate-500 italic">None</div>
+                          ) : (
+                            <ul className="space-y-1">
+                              {manageItems.map((item) => (
+                                <li
+                                  key={`bd-m-${item.key}`}
+                                  className="text-[11px] text-slate-200 flex items-start justify-between gap-1.5"
+                                >
+                                  <span className="truncate">• {item.label}</span>
+                                  {item.scopeHint && (
+                                    <span className="text-[9px] font-bold text-emerald-300 shrink-0">
+                                      ({item.scopeHint.replace(' Only', '').replace(' Scope', '')})
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        {/* View Only Column */}
+                        <div className="bg-[#09111f] border border-sky-500/30 rounded-lg p-2.5 space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px] font-bold text-sky-300">
+                            <span className="inline-flex items-center gap-1.5">
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>View Only ({viewItems.length})</span>
+                            </span>
+                          </div>
+                          {viewItems.length === 0 ? (
+                            <div className="text-[11px] text-slate-500 italic">None</div>
+                          ) : (
+                            <ul className="space-y-1">
+                              {viewItems.map((item) => (
+                                <li
+                                  key={`bd-v-${item.key}`}
+                                  className="text-[11px] text-slate-300 flex items-start justify-between gap-1.5"
+                                >
+                                  <span className="truncate">• {item.label}</span>
+                                  {item.scopeHint && (
+                                    <span className="text-[9px] font-bold text-sky-300 shrink-0">
+                                      ({item.scopeHint.replace(' Only', '').replace(' Scope', '')})
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        {/* Hidden Column */}
+                        <div className="bg-[#09111f] border border-rose-500/25 rounded-lg p-2.5 space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px] font-bold text-rose-300">
+                            <span className="inline-flex items-center gap-1.5">
+                              <EyeOff className="w-3.5 h-3.5" />
+                              <span>Hide ({hiddenItems.length})</span>
+                            </span>
+                          </div>
+                          {hiddenItems.length === 0 ? (
+                            <div className="text-[11px] text-slate-500 italic">None</div>
+                          ) : (
+                            <ul className="space-y-1">
+                              {hiddenItems.map((item) => (
+                                <li
+                                  key={`bd-h-${item.key}`}
+                                  className="text-[11px] text-slate-400 truncate"
+                                >
+                                  • {item.label}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  ))}
+                  );
+                })()}
+
+                {/* Expandable Sidebar Menu Tree */}
+                <div className="space-y-3">
+                  {SIDEBAR_PERMISSION_TREE.map((menu) => {
+                    const MenuIcon = menu.icon;
+                    const menuLevel = rolePermissions[selectedPermRole]?.[menu.key] || 'hide';
+                    const isMenuHidden = menuLevel === 'hide';
+                    const isExpanded = expandedMenuGroups[menu.key] ?? true;
+                    const activeChildrenCount = isMenuHidden
+                      ? 0
+                      : menu.children.filter(
+                          (child) =>
+                            getRolePermissionLevel(selectedPermRole, child.key, rolePermissions) !==
+                            'hide'
+                        ).length;
+
+                    const renderLevelSelector = (
+                      targetKey: RolePermissionKey,
+                      currentValue: PermissionLevel,
+                      allowedLevels: PermissionLevel[],
+                      parentKey?: RolePermissionKey,
+                      parentHidden = false
+                    ) => {
+                      const effectiveDisplay: PermissionLevel = parentHidden
+                        ? 'hide'
+                        : currentValue;
+                      return (
+                        <div className="inline-flex items-center p-0.5 rounded-lg bg-[#09111f] border border-[#1e3150] shrink-0">
+                          {allowedLevels.map((lvl) => {
+                            const isActive = effectiveDisplay === lvl;
+                            const labelText =
+                              lvl === 'hide' ? 'Hide' : lvl === 'view' ? 'View' : 'Manage';
+                            const activeStyle =
+                              lvl === 'hide'
+                                ? 'bg-rose-600/25 border-rose-500/50 text-rose-300 shadow-sm'
+                                : lvl === 'view'
+                                  ? 'bg-sky-600/25 border-sky-500/50 text-sky-300 shadow-sm'
+                                  : 'bg-emerald-600/25 border-emerald-500/50 text-emerald-300 shadow-sm';
+                            return (
+                              <button
+                                key={`${targetKey}-${lvl}`}
+                                type="button"
+                                disabled={!isOwner}
+                                onClick={() =>
+                                  handleSetPermissionLevel(targetKey, lvl, parentKey)
+                                }
+                                title={`Set ${labelText}`}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border transition-all ${
+                                  isOwner ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
+                                } ${
+                                  isActive
+                                    ? activeStyle
+                                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                {lvl === 'hide' && <EyeOff className="w-3 h-3 shrink-0" />}
+                                {lvl === 'view' && <Eye className="w-3 h-3 shrink-0" />}
+                                {lvl === 'manage' && <Edit3 className="w-3 h-3 shrink-0" />}
+                                <span>{labelText}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    };
+
+                    return (
+                      <div
+                        key={menu.key}
+                        className="bg-[#101c31] border border-[#1d2e4c] rounded-xl overflow-hidden"
+                      >
+                        {/* Parent Sidebar Menu Header Row */}
+                        <div
+                          className={`px-3.5 sm:px-4 py-3 bg-[#0d1729] flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 ${
+                            isExpanded ? 'border-b border-[#182844]' : ''
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandMenuGroup(menu.key)}
+                            className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer group"
+                          >
+                            <span className="mt-0.5 sm:mt-0 p-1 rounded-lg bg-[#101c31] border border-[#1f3356] text-slate-300 group-hover:text-white group-hover:border-emerald-500/45 transition-colors shrink-0">
+                              {isExpanded ? (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              )}
+                            </span>
+                            <span className="p-1.5 rounded-lg bg-[#122038] border border-[#223659] text-emerald-400 shrink-0 hidden sm:inline-flex">
+                              <MenuIcon className="w-4 h-4" />
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs sm:text-[13px] font-bold text-white">
+                                  {menu.label}
+                                </span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums border ${
+                                    isMenuHidden
+                                      ? 'bg-rose-950/40 border-rose-500/40 text-rose-300'
+                                      : 'bg-[#072a1d] border-emerald-500/40 text-emerald-300'
+                                  }`}
+                                >
+                                  {isMenuHidden
+                                    ? 'Menu Hidden'
+                                    : `${activeChildrenCount}/${menu.children.length} active`}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-400 mt-0.5 truncate sm:whitespace-normal">
+                                {menu.desc}
+                              </div>
+                            </div>
+                          </button>
+
+                          {renderLevelSelector(menu.key, menuLevel, menu.allowedLevels)}
+                        </div>
+
+                        {/* Nested Sub-Options under Arrow */}
+                        {isExpanded && (
+                          <div className="pl-4 sm:pl-6 bg-[#0b1526]">
+                            <div className="border-l-2 border-[#1b2e4f] divide-y divide-[#17253e]">
+                              {isMenuHidden && (
+                                <div className="px-4 py-2 bg-rose-950/20 text-[11px] text-rose-300/90 flex items-center gap-2">
+                                  <EyeOff className="w-3.5 h-3.5 shrink-0" />
+                                  <span>
+                                    Parent menu is set to <strong>Hide</strong>. Select{' '}
+                                    <strong>View</strong> or <strong>Manage</strong> on any option
+                                    below to activate this menu automatically.
+                                  </span>
+                                </div>
+                              )}
+                              {menu.children.map((child) => {
+                                const childRawLevel =
+                                  rolePermissions[selectedPermRole]?.[child.key] || 'hide';
+                                const childScopeHint = getRolePermissionScopeHint(
+                                  selectedPermRole,
+                                  child.key
+                                );
+                                return (
+                                  <div
+                                    key={child.key}
+                                    className={`px-3.5 sm:px-4 py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 hover:bg-[#122039]/60 transition-colors ${
+                                      isMenuHidden ? 'opacity-65' : ''
+                                    }`}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className="text-xs font-semibold text-white">
+                                          {child.label}
+                                        </span>
+                                        {childScopeHint && (
+                                          <span className="px-1.5 py-0.5 rounded bg-[#101c31] border border-[#243b61] text-[10px] font-bold text-amber-300">
+                                            {childScopeHint}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-slate-400 mt-0.5">
+                                        {child.desc}
+                                      </div>
+                                    </div>
+                                    {renderLevelSelector(
+                                      child.key,
+                                      childRawLevel,
+                                      child.allowedLevels,
+                                      menu.key,
+                                      isMenuHidden
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2157,7 +2701,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       className={`w-4 h-4 ${isRefreshingHistory ? 'animate-spin' : ''}`}
                     />
                   </button>
-                  {canEditCloudAndNotice && (
+                  {canClearHistory && (
                     <button
                       type="button"
                       onClick={() => {
@@ -2242,10 +2786,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* TAB: DATABASE CLOUD SYNC */}
             {resolvedActiveTab === 'sync' && (
               <div className="space-y-4">
-                {!canEditCloudAndNotice && (
+                {!canUploadCloudSync && (
                   <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-medium border bg-amber-950/35 border-amber-500/35 text-amber-200">
                     <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Cloud Sync actions are restricted for your role ({operatorRole}).</span>
+                    <span>
+                      {canPullCloudSync
+                        ? `Upload to Cloud is View-Only for your role (${operatorRole}). You can still Refresh from Cloud.`
+                        : `Cloud Sync actions are restricted for your role (${operatorRole}).`}
+                    </span>
                   </div>
                 )}
                 <div className="bg-[#101c31] border border-[#1d2e4c] rounded-xl p-4 space-y-2">
@@ -2262,7 +2810,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <button
                     type="button"
                     onClick={handleUploadSync}
-                    disabled={isSyncing || !canEditCloudAndNotice}
+                    disabled={isSyncing || !canUploadCloudSync}
                     className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
                   >
                     <CloudUpload className="w-4 h-4" />
@@ -2271,7 +2819,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <button
                     type="button"
                     onClick={handlePullSync}
-                    disabled={isSyncing || !canEditCloudAndNotice}
+                    disabled={isSyncing || !canPullCloudSync}
                     className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-[#13223a] hover:bg-[#1a2e4f] text-slate-100 border border-[#243b61] text-xs font-bold transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
                   >
                     <CloudDownload className="w-4 h-4 text-sky-400" />
@@ -2301,10 +2849,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* TAB: APP NOTICE */}
             {resolvedActiveTab === 'notice' && (
               <div className="space-y-4">
-                {!canEditCloudAndNotice && (
+                {!canEditAppNotice && (
                   <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-medium border bg-amber-950/35 border-amber-500/35 text-amber-200">
                     <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Editing App Notice is restricted for your role ({operatorRole}).</span>
+                    <span>Editing App Notice is View-Only for your role ({operatorRole}).</span>
                   </div>
                 )}
                 <div className="bg-[#101c31] border border-[#1d2e4c] rounded-xl p-4 space-y-3">
@@ -2320,7 +2868,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <textarea
                     rows={4}
                     maxLength={500}
-                    disabled={!canEditCloudAndNotice}
+                    disabled={!canEditAppNotice}
                     value={noticeDraft}
                     onChange={(e) => setNoticeDraft(e.target.value)}
                     placeholder="Enter operational notice (leave empty to hide banner)..."
@@ -2330,7 +2878,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span className="text-[11px] text-slate-500 tabular-nums">
                       {noticeDraft.length}/500
                     </span>
-                    {canEditCloudAndNotice && (
+                    {canEditAppNotice && (
                       <div className="flex items-center gap-2">
                         <button
                           type="button"

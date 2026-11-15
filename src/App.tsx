@@ -79,6 +79,7 @@ import {
   saveRolePermissions,
   getUserRoleByBd,
   hasRolePermission,
+  canManageRolePermission,
   loadThemePreference,
   saveThemePreference,
 } from './utils/storage';
@@ -97,7 +98,7 @@ import {
   uploadSettingsToCloud,
   type CloudSettings,
 } from './utils/firebaseSync';
-import { createBlankUnitRow, DISPOSAL_OPTIONS } from './data/initialData';
+import { createBlankUnitRow, DISPOSAL_OPTIONS, INITIAL_PREPARED_BY } from './data/initialData';
 import { FileSpreadsheet, Users, History, Megaphone, X, Lock, UserCheck } from 'lucide-react';
 import { OfflineIndicator } from './components/OfflineIndicator';
 
@@ -306,6 +307,16 @@ export default function App() {
   const handleGuestLogin = React.useCallback(() => {
     saveGuestSession(true);
     setIsGuestSession(true);
+    const defaultWing = wings[0];
+    if (defaultWing) {
+      setActiveWingId(defaultWing.id);
+      setActiveTab(defaultWing.name);
+    }
+    setWingSubTab('consolidated');
+    setUnitSubTab('state');
+    setIsPreparedByOpen(false);
+    setIsQuickEditActive(false);
+
     const nextHistory = recordLoginHistoryEntry(
       { bdNo: 'GUEST', rank: '', name: 'Guest User', trade: '', flight: 'View Only' },
       'Guest'
@@ -317,7 +328,7 @@ export default function App() {
       { loginHistory: nextHistory }
     );
     void flushCloudUploads();
-  }, [dayState.preparedBy, dayState.savedCustomDisposals, flushCloudUploads, markSettingsChangedForCloud]);
+  }, [dayState.preparedBy, dayState.savedCustomDisposals, flushCloudUploads, markSettingsChangedForCloud, wings]);
 
   const handleOperatorVerified = React.useCallback(
     (operator: OperatorProfile) => {
@@ -328,6 +339,35 @@ export default function App() {
       verifiedOperatorRef.current = operator;
       setVerifiedOperator(operator);
       setIsOperatorAuthOpen(false);
+
+      if (loginMode === 'Portal') {
+        let operatorUnit = findExistingBdConflict(dayState, operator.bdNo)?.unit || null;
+        if (!operatorUnit) {
+          const logs = dayState.updateLogs || [];
+          for (let i = logs.length - 1; i >= 0; i -= 1) {
+            if (logs[i]?.operator?.bdNo?.trim() === operator.bdNo.trim() && logs[i].unitName) {
+              operatorUnit = logs[i].unitName;
+              break;
+            }
+          }
+        }
+        if (operatorUnit) {
+          const matchedWing = wings.find((w) =>
+            w.units.some((u) => u.toLowerCase() === operatorUnit!.toLowerCase())
+          );
+          const canonicalUnit =
+            matchedWing?.units.find((u) => u.toLowerCase() === operatorUnit!.toLowerCase()) ||
+            operatorUnit;
+          if (matchedWing) {
+            setActiveWingId(matchedWing.id);
+          }
+          setActiveTab(canonicalUnit);
+          setUnitSubTab('state');
+          setWingSubTab('consolidated');
+          setIsPreparedByOpen(false);
+          setIsQuickEditActive(false);
+        }
+      }
 
       const nextRecent = recordRecentUserId(operator.bdNo);
       const nextHistory = recordLoginHistoryEntry(operator, loginMode);
@@ -346,7 +386,7 @@ export default function App() {
         nextAction();
       }
     },
-    [dayState.preparedBy, dayState.savedCustomDisposals, flushCloudUploads, isOperatorAuthOpen, markSettingsChangedForCloud]
+    [dayState, flushCloudUploads, isOperatorAuthOpen, markSettingsChangedForCloud, wings]
   );
 
   const handleSignUpFromPortal = React.useCallback(
@@ -705,6 +745,7 @@ export default function App() {
       action: string;
     }
   ) => {
+    if (isGuestSession) return;
     setDayState((prev) => {
       const next = updater(prev);
       if (next === prev) return prev;
@@ -765,8 +806,10 @@ export default function App() {
   const currentRole: UserRole | 'GUEST' = verifiedOperator
     ? getUserRoleByBd(dayState, verifiedOperator.bdNo)
     : 'GUEST';
-  const can = (key: RolePermissionKey): boolean =>
+  const canView = (key: RolePermissionKey): boolean =>
     hasRolePermission(currentRole, key, rolePermissions);
+  const canManage = (key: RolePermissionKey): boolean =>
+    !isGuestSession && canManageRolePermission(currentRole, key, rolePermissions);
 
   const loggedInUserUnit = React.useMemo(() => {
     if (!verifiedOperator) return null;
@@ -781,23 +824,17 @@ export default function App() {
     return null;
   }, [dayState, verifiedOperator]);
 
+  const isWingAdmin = currentRole === 'ADMIN' && Boolean(loggedInUserUnit);
   const isRestrictedUser = currentRole === 'USER' && Boolean(loggedInUserUnit);
+  const isWingScopedRole = isWingAdmin || isRestrictedUser;
 
   const visibleWings = React.useMemo(() => {
-    if (!isRestrictedUser || !loggedInUserUnit) return wings;
+    if (!isWingScopedRole || !loggedInUserUnit) return wings;
     const parentWing = wings.find((w) =>
       w.units.some((u) => u.toLowerCase() === loggedInUserUnit.toLowerCase())
     );
     if (parentWing) {
-      const canonicalUnit =
-        parentWing.units.find((u) => u.toLowerCase() === loggedInUserUnit.toLowerCase()) ||
-        loggedInUserUnit;
-      return [
-        {
-          ...parentWing,
-          units: [canonicalUnit],
-        },
-      ];
+      return [parentWing];
     }
     const fallbackWing = wings[0];
     return [
@@ -809,15 +846,26 @@ export default function App() {
         preparedBy: fallbackWing?.preparedBy,
       },
     ];
-  }, [isRestrictedUser, loggedInUserUnit, wings]);
+  }, [isWingScopedRole, loggedInUserUnit, wings]);
+
+  const userCanonicalUnit = React.useMemo(() => {
+    if (!loggedInUserUnit) return null;
+    const userWing = visibleWings[0];
+    return (
+      userWing?.units.find((u) => u.toLowerCase() === loggedInUserUnit.toLowerCase()) ||
+      loggedInUserUnit
+    );
+  }, [loggedInUserUnit, visibleWings]);
 
   useEffect(() => {
-    if (!isRestrictedUser || !loggedInUserUnit || visibleWings.length === 0) return;
+    if (!isWingScopedRole || !userCanonicalUnit || visibleWings.length === 0) return;
     const userWing = visibleWings[0];
-    const userCanonicalUnit = userWing.units[0] || loggedInUserUnit;
-    const isAllowedTab =
-      activeTab.toLowerCase() === userWing.name.toLowerCase() ||
-      activeTab.toLowerCase() === userCanonicalUnit.toLowerCase();
+    const isAllowedTab = isWingAdmin
+      ? activeTab.toLowerCase() === userWing.name.toLowerCase() ||
+        userWing.units.some((u) => u.toLowerCase() === activeTab.toLowerCase())
+      : activeTab.toLowerCase() === userWing.name.toLowerCase() ||
+        activeTab.toLowerCase() === userCanonicalUnit.toLowerCase();
+
     if (!isAllowedTab) {
       setActiveWingId(userWing.id);
       setActiveTab(userCanonicalUnit);
@@ -826,18 +874,101 @@ export default function App() {
     } else if (activeWingId !== userWing.id) {
       setActiveWingId(userWing.id);
     }
-  }, [isRestrictedUser, loggedInUserUnit, visibleWings, activeTab, activeWingId]);
+  }, [
+    isWingScopedRole,
+    isWingAdmin,
+    userCanonicalUnit,
+    visibleWings,
+    activeTab,
+    activeWingId,
+  ]);
+
+  const guestDisplayDayState: DayState = React.useMemo(
+    () => ({
+      date: dayState.date,
+      formattedDisplayDate: dayState.formattedDisplayDate,
+      preparedBy: INITIAL_PREPARED_BY,
+      airmen155: [],
+      unitAirmen: {},
+      disposals: [],
+      consolidatedUnits: wings.flatMap((w) => w.units).map((u) => createBlankUnitRow(u)),
+      customRemarks: '',
+      unitRemarks: {},
+      savedCustomDisposals: [],
+      updateLogs: [],
+      rosterVersion: dayState.rosterVersion,
+    }),
+    [dayState.date, dayState.formattedDisplayDate, dayState.rosterVersion, wings]
+  );
+  const viewDayState = isGuestSession ? guestDisplayDayState : dayState;
 
   const activeWing = visibleWings.find((w) => w.id === activeWingId) || visibleWings[0];
-  const activeWingPreparedBy = getWingPreparedBy(activeWing, dayState.preparedBy);
+  const activeWingPreparedBy = isGuestSession
+    ? INITIAL_PREPARED_BY
+    : getWingPreparedBy(activeWing, dayState.preparedBy);
   const isWingView = visibleWings.some((w) => w.name === activeTab);
   const activeUnitName = isWingView
-    ? loggedInUserUnit || visibleWings[0]?.units[0] || '155 UASU BAF'
+    ? userCanonicalUnit || visibleWings[0]?.units[0] || '155 UASU BAF'
     : activeTab;
+
+  const canEditUnitNominalRoll = React.useCallback(
+    (unitName: string): boolean => {
+      if (isGuestSession) return false;
+      if (!isWingScopedRole || !userCanonicalUnit) return true;
+      return unitName.trim().toLowerCase() === userCanonicalUnit.trim().toLowerCase();
+    },
+    [isGuestSession, isWingScopedRole, userCanonicalUnit]
+  );
+
+  const canQuickEditWingUnit = React.useCallback(
+    (unitName: string): boolean => {
+      if (isGuestSession) return false;
+      if (isRestrictedUser) return false;
+      if (isWingAdmin) {
+        return activeWing.units.some(
+          (u) => u.toLowerCase() === unitName.trim().toLowerCase()
+        );
+      }
+      return true;
+    },
+    [activeWing.units, isGuestSession, isRestrictedUser, isWingAdmin]
+  );
+
+  const isOwnOfficeUnit = canEditUnitNominalRoll(activeUnitName);
+
+  // Automatically redirect away from a hidden Sidebar menu to an allowed one
+  useEffect(() => {
+    const overviewAllowed = hasRolePermission(currentRole, 'menuOverview', rolePermissions);
+    const squadronsAllowed = hasRolePermission(currentRole, 'menuSquadrons', rolePermissions);
+    if (isWingView && !overviewAllowed && squadronsAllowed) {
+      const targetUnit = userCanonicalUnit || activeWing?.units[0];
+      if (targetUnit && targetUnit !== activeTab) {
+        setActiveTab(targetUnit);
+        setUnitSubTab('state');
+      }
+    } else if (!isWingView && !squadronsAllowed && overviewAllowed && activeWing) {
+      if (activeTab !== activeWing.name) {
+        setActiveTab(activeWing.name);
+        setWingSubTab('consolidated');
+      }
+    }
+  }, [
+    currentRole,
+    rolePermissions,
+    isWingView,
+    userCanonicalUnit,
+    activeWing,
+    activeTab,
+  ]);
 
   // Update Airman Disposal directly from Nominal Roll dropdown
   const handleUpdateAirmanDisposal = (airmanId: string, disposalVal: string) => {
-    if (!can('manageNominalRoll')) return;
+    if (
+      (!canManage('manageNominalRoll') && !canManage('editUnitDisposals')) ||
+      !canEditUnitNominalRoll(activeUnitName)
+    ) {
+      return;
+    }
     const targetAirman = getUnitAirmen(dayState, activeUnitName).find((a) => a.id === airmanId);
     const targetLabel = targetAirman
       ? `${targetAirman.rank} ${targetAirman.name}${targetAirman.bdNo ? ` (BD ${targetAirman.bdNo})` : ''}`
@@ -1035,8 +1166,9 @@ export default function App() {
 
   // Remove Disposal Handler
   const handleRemoveDisposal = (disposalId: string) => {
-    if (!can('editUnitDisposals')) return;
     const dispTarget = dayState.disposals.find((d) => d.id === disposalId);
+    const targetUnit = dispTarget?.unit || activeUnitName;
+    if (!canManage('editUnitDisposals') || !canEditUnitNominalRoll(targetUnit)) return;
     updateAndSaveState(
       (prev) => {
         const dispToRemove = prev.disposals.find((d) => d.id === disposalId);
@@ -1069,7 +1201,7 @@ export default function App() {
 
   // Quick toggle parade status
   const handleToggleAirmanParade = (airmanId: string) => {
-    if (!can('editUnitDisposals')) return;
+    if (!canManage('editUnitDisposals') || !canEditUnitNominalRoll(activeUnitName)) return;
     const targetAirman = getUnitAirmen(dayState, activeUnitName).find((a) => a.id === airmanId);
     updateAndSaveState(
       (prev) => {
@@ -1122,6 +1254,7 @@ export default function App() {
   // Add new airman to active unit roster (maintaining Rank & BD seniority & cross-unit BD uniqueness)
   const handleAddAirmanToRoster = (newAirmanData: Omit<Airman, 'id'>) => {
     const targetUnit = newAirmanData.unit || activeUnitName;
+    if (!canManage('manageNominalRoll') || !canEditUnitNominalRoll(targetUnit)) return;
     updateAndSaveState(
       (prev) => {
         if (newAirmanData.bdNo && findExistingBdConflict(prev, newAirmanData.bdNo)) {
@@ -1150,6 +1283,7 @@ export default function App() {
   const handleAddAirmenBulk = (newAirmenList: Omit<Airman, 'id'>[]) => {
     if (newAirmenList.length === 0) return;
     const targetUnit = newAirmenList[0].unit || activeUnitName;
+    if (!canManage('manageNominalRoll') || !canEditUnitNominalRoll(targetUnit)) return;
     updateAndSaveState(
       (prev) => {
         const currentList = getUnitAirmen(prev, targetUnit);
@@ -1186,7 +1320,7 @@ export default function App() {
 
   // Update Prepared By (independent per Wing)
   const handleSavePreparedBy = (updated: PreparedByInfo) => {
-    if (!can('editPreparedBy')) return;
+    if (!canManage('editPreparedBy')) return;
     const targetWingId = activeWing.id;
     const isFlyingWingTarget = targetWingId === 'flying-wing';
     const nextWings = saveWingsConfig(
@@ -1219,12 +1353,12 @@ export default function App() {
 
   // Update unit remarks (live typing, logged on blur via handleCommitRemarks)
   const handleUpdateRemarks = (remarks: string) => {
-    if (!can('editUnitDisposals')) return;
+    if (!canManage('editUnitDisposals') || !canEditUnitNominalRoll(activeUnitName)) return;
     updateAndSaveState((prev) => setUnitRemarks(prev, activeUnitName, remarks));
   };
 
   const handleCommitRemarks = (remarks: string) => {
-    if (!can('editUnitDisposals')) return;
+    if (!canManage('editUnitDisposals') || !canEditUnitNominalRoll(activeUnitName)) return;
     updateAndSaveState(
       (prev) => ({ ...setUnitRemarks(prev, activeUnitName, remarks) }),
       {
@@ -1237,7 +1371,7 @@ export default function App() {
 
   // Delete airman from active unit roster
   const handleDeleteAirman = (airmanId: string) => {
-    if (!can('deleteNominalRollAirman')) return;
+    if (!canManage('deleteNominalRollAirman') || !canEditUnitNominalRoll(activeUnitName)) return;
     const targetAirman = getUnitAirmen(dayState, activeUnitName).find((a) => a.id === airmanId);
     updateAndSaveState(
       (prev) => {
@@ -1260,8 +1394,8 @@ export default function App() {
 
   // Full airman update (from clicking row in Nominal Roll)
   const handleUpdateAirmanFull = (updatedAirman: Airman, disposalVal: string) => {
-    if (!can('manageNominalRoll')) return;
     const targetUnit = updatedAirman.unit || activeUnitName;
+    if (!canManage('manageNominalRoll') || !canEditUnitNominalRoll(targetUnit)) return;
     updateAndSaveState(
       (prev) => {
         if (
@@ -1310,7 +1444,7 @@ export default function App() {
 
   // Update Squadron in Wing Consolidated State
   const handleUpdateSquadronRow = (updatedRow: UnitRowState) => {
-    if (!can('editQuickSqnCount')) return;
+    if (!canManage('editQuickSqnCount') || !canQuickEditWingUnit(updatedRow.sqnUnit)) return;
     const rowWing =
       wings.find((w) =>
         w.units.some((u) => u.toLowerCase() === updatedRow.sqnUnit.toLowerCase())
@@ -1331,7 +1465,7 @@ export default function App() {
   };
 
   const openSettingsModal = (tab: SettingsTabId = 'theme') => {
-    if (!can('accessSettings') && currentRole !== 'OWNER') return;
+    if (!canView('accessSettings') && currentRole !== 'OWNER') return;
     setSettingsInitialTab(tab);
     setIsSettingsOpen(true);
   };
@@ -1340,7 +1474,7 @@ export default function App() {
     wingId: string,
     unitName: string
   ): { ok: boolean; error?: string } => {
-    if (!can('manageWingsAndUnits')) {
+    if (!canManage('manageWingsAndUnits')) {
       return { ok: false, error: 'Unit management is restricted for your role.' };
     }
     const cleanUnit = unitName.trim();
@@ -1386,7 +1520,7 @@ export default function App() {
   };
 
   const handleDeleteUnitFromWing = (wingId: string, unitName: string) => {
-    if (!can('manageWingsAndUnits')) return;
+    if (!canManage('manageWingsAndUnits')) return;
     const nextWings = saveWingsConfig(
       wings.map((w) =>
         w.id === wingId
@@ -1414,7 +1548,7 @@ export default function App() {
     newWingId: string,
     newUnitName: string
   ): { ok: boolean; error?: string } => {
-    if (!can('manageWingsAndUnits')) {
+    if (!canManage('manageWingsAndUnits')) {
       return { ok: false, error: 'Unit management is restricted for your role.' };
     }
     const cleanNewName = newUnitName.trim();
@@ -1528,7 +1662,7 @@ export default function App() {
   };
 
   const handleDeleteAirmanByUnit = (unitName: string, airmanId: string) => {
-    if (!can('manageUsers')) return;
+    if (!canManage('manageUsers') || !canEditUnitNominalRoll(unitName)) return;
     const targetAirman = getUnitAirmen(dayState, unitName).find((a) => a.id === airmanId);
     updateAndSaveState(
       (prev) => {
@@ -1550,8 +1684,8 @@ export default function App() {
   };
 
   const handleAddAirmanFromSettings = (newAirmanData: Omit<Airman, 'id'>) => {
-    if (!can('manageUsers')) return;
     const targetUnit = newAirmanData.unit || activeUnitName;
+    if (!canManage('manageUsers') || !canEditUnitNominalRoll(targetUnit)) return;
     updateAndSaveState(
       (prev) => {
         if (newAirmanData.bdNo && findExistingBdConflict(prev, newAirmanData.bdNo)) {
@@ -1590,7 +1724,7 @@ export default function App() {
       adminPin?: string;
     }
   ) => {
-    if (!can('manageUsers')) return;
+    if (!canManage('manageUsers') || !canEditUnitNominalRoll(unitName)) return;
     const targetAirman = getUnitAirmen(dayState, unitName).find((a) => a.id === airmanId);
     const changes: string[] = [];
     if (
@@ -1740,7 +1874,7 @@ export default function App() {
   };
 
   const handleClearLoginHistory = () => {
-    if (!can('manageCloudAndNotice')) return;
+    if (!canManage('settingsHistory')) return;
     saveLoginHistoryList([]);
     setLoginHistory([]);
     markSettingsChangedForCloud(
@@ -1752,7 +1886,7 @@ export default function App() {
   };
 
   const handleSaveAppNotice = (notice: string) => {
-    if (!can('manageCloudAndNotice')) return;
+    if (!canManage('settingsNotice')) return;
     const clean = saveAppNoticeStorage(notice);
     setAppNotice(clean);
     setIsNoticeDismissed(false);
@@ -1764,13 +1898,13 @@ export default function App() {
     void flushCloudUploads();
   };
 
-  const activeUnitAirmenCount = getUnitAirmen(dayState, activeUnitName).length;
+  const activeUnitAirmenCount = getUnitAirmen(viewDayState, activeUnitName).length;
   const visibleDayLogs =
-    isRestrictedUser && loggedInUserUnit
-      ? (dayState.updateLogs || []).filter(
-          (entry) => entry.unitName.toLowerCase() === loggedInUserUnit.toLowerCase()
+    isRestrictedUser && userCanonicalUnit
+      ? (viewDayState.updateLogs || []).filter(
+          (entry) => entry.unitName.toLowerCase() === userCanonicalUnit.toLowerCase()
         )
-      : dayState.updateLogs || [];
+      : viewDayState.updateLogs || [];
   const activeWingLogsCount = visibleDayLogs.filter((entry) => {
     const entryUnitLower = (entry.unitName || '').trim().toLowerCase();
     return (
@@ -1825,14 +1959,25 @@ export default function App() {
           wings={visibleWings}
           activeWingId={activeWing.id}
           activeTab={activeTab}
-          dayState={dayState}
+          dayState={viewDayState}
           operator={verifiedOperator}
           operatorRole={currentRole}
-          brandTitle={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : 'BAF BASE ZHR'}
+          brandTitle={
+            isRestrictedUser && userCanonicalUnit
+              ? userCanonicalUnit
+              : isWingAdmin
+                ? activeWing.shortName || activeWing.name
+                : 'BAF BASE ZHR'
+          }
+          sidebarAllowedUnits={
+            isRestrictedUser && userCanonicalUnit ? [userCanonicalUnit] : undefined
+          }
           isCollapsed={isSidebarCollapsed}
           isMobileOpen={isMobileSidebarOpen}
           isSettingsOpen={isSettingsOpen}
-          canAccessSettings={can('accessSettings')}
+          canAccessSettings={canView('accessSettings')}
+          showOverview={canView('menuOverview')}
+          showSquadrons={canView('menuSquadrons')}
           onToggleCollapse={() => setIsSidebarCollapsed((p) => !p)}
           onCloseMobile={() => setIsMobileSidebarOpen(false)}
           onSelectWing={(wing) => {
@@ -1862,22 +2007,22 @@ export default function App() {
             onPrevDate={handlePrevDate}
             onNextDate={handleNextDate}
             onOpenCalendar={() => setIsCalendarOpen(true)}
-            onOpenPrint={() => can('exportPrintReport') && setIsPrintOpen(true)}
+            onOpenPrint={() => canView('exportPrintReport') && setIsPrintOpen(true)}
             activeTab={activeTab}
             isWingView={isWingView}
             wingSubTab={wingSubTab}
             unitSubTab={unitSubTab}
             operator={verifiedOperator}
-            canExportPrint={can('exportPrintReport')}
-            canOpenCloudSync={can('accessSettings') && can('manageCloudAndNotice')}
+            canExportPrint={canView('exportPrintReport')}
+            canOpenCloudSync={canView('accessSettings') && canView('manageCloudAndNotice')}
             onLogout={handleLogout}
             onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
             onOpenCloudSync={() => openSettingsModal('sync')}
           />
         )}
 
-        {/* Shared App Notice Banner (managed in Settings -> App Notice) */}
-        {!isQuickEditActive && appNotice.trim() && !isNoticeDismissed && (
+        {/* Shared App Notice Banner (managed in Settings -> App Notice, hidden for Guest format-only preview) */}
+        {!isQuickEditActive && !isGuestSession && appNotice.trim() && !isNoticeDismissed && (
           <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 pt-3">
             <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-amber-950/35 border border-amber-500/35 text-amber-200 text-xs">
               <div className="flex items-center gap-2 min-w-0">
@@ -1898,28 +2043,41 @@ export default function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 w-full pt-3 sm:pt-4 pb-6">
-          {isWingView ? (
+          {(isWingView && !canView('menuOverview')) || (!isWingView && !canView('menuSquadrons')) ? (
+            <div className="w-full max-w-3xl mx-auto px-4 py-12">
+              <div className="bg-[#0d1728] border border-amber-500/35 rounded-2xl p-6 text-center space-y-2">
+                <Lock className="w-7 h-7 text-amber-400 mx-auto" />
+                <div className="text-sm font-bold text-white">Access Restricted by Owner</div>
+                <div className="text-xs text-slate-400">
+                  {isWingView ? 'Overview' : 'Squadrons / Units'} menu is currently hidden for{' '}
+                  {currentRole}.
+                </div>
+              </div>
+            </div>
+          ) : isWingView ? (
             <>
               {/* Separate Sub-Option Boxes (Consolidated State, Prepared By, Update Log) */}
               {!isQuickEditActive && (
                 <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 mb-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setWingSubTab('consolidated');
-                        setIsPreparedByOpen(false);
-                      }}
-                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
-                        wingSubTab === 'consolidated' && !isPreparedByOpen
-                          ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
-                          : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
-                      }`}
-                    >
-                      <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
-                      <span>Consolidated State</span>
-                    </button>
-                    {can('editPreparedBy') && (
+                    {canView('viewConsolidatedState') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setWingSubTab('consolidated');
+                          setIsPreparedByOpen(false);
+                        }}
+                        className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
+                          wingSubTab === 'consolidated' && !isPreparedByOpen
+                            ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                            : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
+                        }`}
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+                        <span>Consolidated State</span>
+                      </button>
+                    )}
+                    {canManage('editPreparedBy') && (
                       <button
                         type="button"
                         onClick={() => requireOperatorAuth(() => setIsPreparedByOpen(true))}
@@ -1933,7 +2091,7 @@ export default function App() {
                         <span>Prepared By</span>
                       </button>
                     )}
-                    {can('viewUpdateLog') && (
+                    {canView('viewUpdateLog') && (
                       <button
                         type="button"
                         onClick={() => {
@@ -1965,12 +2123,15 @@ export default function App() {
 
               <div key={`${activeWing.id}-${wingSubTab}`} className="animate-tab-enter">
                 {wingSubTab === 'log' ? (
-                  can('viewUpdateLog') ? (
+                  canView('viewUpdateLog') ? (
                     <StateUpdateLogView
-                      dayState={dayState}
+                      dayState={viewDayState}
                       wings={wings}
                       activeWing={activeWing}
-                      lockedUnit={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
+                      lockedUnit={
+                        isRestrictedUser && userCanonicalUnit ? userCanonicalUnit : undefined
+                      }
+                      isGuestView={isGuestSession}
                     />
                   ) : (
                     <div className="w-full max-w-3xl mx-auto px-4 py-12">
@@ -1983,12 +2144,17 @@ export default function App() {
                       </div>
                     </div>
                   )
-                ) : can('viewConsolidatedState') ? (
+                ) : canView('viewConsolidatedState') ? (
                   <ConsolidatedWingView
-                    dayState={dayState}
+                    dayState={viewDayState}
                     activeWing={activeWing}
                     preparedBy={activeWingPreparedBy}
-                    canQuickEdit={can('editQuickSqnCount')}
+                    canQuickEdit={canManage('editQuickSqnCount')}
+                    showPreparedBy={canView('editPreparedBy')}
+                    lockedUnit={
+                      isRestrictedUser && userCanonicalUnit ? userCanonicalUnit : undefined
+                    }
+                    isGuestView={isGuestSession}
                     onUpdateSquadronRow={handleUpdateSquadronRow}
                     onSelectUnit={(unitName) => handleTabChange(unitName)}
                     onAddCustomDisposal={handleAddCustomDisposal}
@@ -2020,40 +2186,44 @@ export default function App() {
               {/* Separate Sub-Option Boxes inside each Squadron/Unit (Night Count State, Nominal Roll, Update Log) */}
               <div className="w-full max-w-7xl mx-auto px-3 sm:px-5 mb-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setUnitSubTab('state')}
-                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
-                      unitSubTab === 'state'
-                        ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
-                        : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
-                    }`}
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
-                    <span>Night Count State</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUnitSubTab('nominalRoll')}
-                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
-                      unitSubTab === 'nominalRoll'
-                        ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
-                        : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
-                    }`}
-                  >
-                    <Users className="w-3.5 h-3.5 shrink-0" />
-                    <span>Nominal Roll</span>
-                    <span
-                      className={`subtab-count-pill ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tabular-nums ${
-                        unitSubTab === 'nominalRoll'
-                          ? 'bg-slate-950/20 text-slate-950'
-                          : 'bg-slate-900/70 text-slate-200'
+                  {canView('viewUnitDetails') && (
+                    <button
+                      type="button"
+                      onClick={() => setUnitSubTab('state')}
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
+                        unitSubTab === 'state'
+                          ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                          : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
                       }`}
                     >
-                      {activeUnitAirmenCount}
-                    </span>
-                  </button>
-                  {can('viewUpdateLog') && (
+                      <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+                      <span>Night Count State</span>
+                    </button>
+                  )}
+                  {canView('manageNominalRoll') && (
+                    <button
+                      type="button"
+                      onClick={() => setUnitSubTab('nominalRoll')}
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all duration-300 ease-out cursor-pointer active:scale-95 ${
+                        unitSubTab === 'nominalRoll'
+                          ? 'subtab-box-btn-active bg-gradient-to-r from-[#00d45e] via-[#00b853] to-[#059669] border-emerald-400/80 text-slate-950 shadow-md shadow-emerald-950/50 scale-[1.02]'
+                          : 'subtab-box-btn bg-gradient-to-r from-[#0e192d] to-[#0a1322] border-[#1f3152] hover:border-emerald-500/50 text-slate-300 hover:text-white shadow-sm'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5 shrink-0" />
+                      <span>Nominal Roll</span>
+                      <span
+                        className={`subtab-count-pill ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold tabular-nums ${
+                          unitSubTab === 'nominalRoll'
+                            ? 'bg-slate-950/20 text-slate-950'
+                            : 'bg-slate-900/70 text-slate-200'
+                        }`}
+                      >
+                        {activeUnitAirmenCount}
+                      </span>
+                    </button>
+                  )}
+                  {canView('viewUnitUpdateLog') && (
                     <button
                       type="button"
                       onClick={() => setUnitSubTab('log')}
@@ -2081,10 +2251,10 @@ export default function App() {
 
               <div key={`${activeUnitName}-${unitSubTab}`} className="animate-tab-enter">
                 {unitSubTab === 'state' ? (
-                  can('viewUnitDetails') ? (
+                  canView('viewUnitDetails') ? (
                     <UnitStateView
                       unitName={activeUnitName}
-                      dayState={dayState}
+                      dayState={viewDayState}
                       onRemoveDisposal={handleRemoveDisposal}
                       onToggleAirmanParade={handleToggleAirmanParade}
                       onSelectAirmanForDisposal={() => setUnitSubTab('nominalRoll')}
@@ -2092,7 +2262,8 @@ export default function App() {
                       onCommitRemarks={handleCommitRemarks}
                       onRequireAuth={requireOperatorAuth}
                       isOperatorVerified={Boolean(verifiedOperator)}
-                      canEditRemarks={can('editUnitDisposals')}
+                      canEditRemarks={canManage('editUnitDisposals') && isOwnOfficeUnit}
+                      isGuestView={isGuestSession}
                     />
                   ) : (
                     <div className="w-full max-w-3xl mx-auto px-4 py-12">
@@ -2106,10 +2277,10 @@ export default function App() {
                     </div>
                   )
                 ) : unitSubTab === 'nominalRoll' ? (
-                  can('viewUnitDetails') || can('manageNominalRoll') ? (
+                  canView('manageNominalRoll') ? (
                     <NominalRollView
                       unitName={activeUnitName}
-                      dayState={dayState}
+                      dayState={viewDayState}
                       onUpdateAirmanDisposal={handleUpdateAirmanDisposal}
                       onUpdateAirmanFull={handleUpdateAirmanFull}
                       onAddAirman={handleAddAirmanToRoster}
@@ -2117,9 +2288,15 @@ export default function App() {
                       onDeleteAirman={handleDeleteAirman}
                       onDeleteCustomDisposal={handleDeleteCustomDisposal}
                       onRequireAuth={requireOperatorAuth}
-                      canEditDisposals={can('editUnitDisposals')}
-                      canManageNominalRoll={can('manageNominalRoll')}
-                      canDeleteAirman={can('deleteNominalRollAirman')}
+                      canEditDisposals={canManage('editUnitDisposals') && isOwnOfficeUnit}
+                      canManageNominalRoll={canManage('manageNominalRoll') && isOwnOfficeUnit}
+                      canDeleteAirman={canManage('deleteNominalRollAirman') && isOwnOfficeUnit}
+                      readOnlyScopeNote={
+                        !isOwnOfficeUnit && isWingAdmin && userCanonicalUnit
+                          ? `View Only — ADMIN can only manage Nominal Roll for own office (${userCanonicalUnit}). Other Wing Squadrons are managed via Consolidated Quick Edit.`
+                          : undefined
+                      }
+                      isGuestView={isGuestSession}
                     />
                   ) : (
                     <div className="w-full max-w-3xl mx-auto px-4 py-12">
@@ -2132,13 +2309,16 @@ export default function App() {
                       </div>
                     </div>
                   )
-                ) : can('viewUpdateLog') ? (
+                ) : canView('viewUnitUpdateLog') ? (
                   <StateUpdateLogView
-                    dayState={dayState}
+                    dayState={viewDayState}
                     wings={wings}
                     activeWing={activeWing}
                     unitFilter={activeUnitName}
-                    lockedUnit={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
+                    lockedUnit={
+                      isRestrictedUser && userCanonicalUnit ? userCanonicalUnit : undefined
+                    }
+                    isGuestView={isGuestSession}
                   />
                 ) : (
                   <div className="w-full max-w-3xl mx-auto px-4 py-12">
@@ -2161,7 +2341,12 @@ export default function App() {
           <footer className="border-t border-[#142036] bg-[#060c17] px-4 sm:px-6 py-2.5 text-[11px] text-slate-400">
             <div className="w-full max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-1.5">
               <span className="font-semibold text-slate-300">
-                {isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : 'BAF BASE ZHR'} • Night Count State System
+                {isRestrictedUser && userCanonicalUnit
+                  ? userCanonicalUnit
+                  : isWingAdmin
+                    ? activeWing.shortName || activeWing.name
+                    : 'BAF BASE ZHR'}{' '}
+                • Night Count State System
               </span>
               <span className="text-slate-500">
                 Bangladesh Air Force • Confidential Personnel Night Count Register
@@ -2182,24 +2367,31 @@ export default function App() {
         onChangeThemePref={handleChangeThemePref}
         rolePermissions={rolePermissions}
         onSaveRolePermissions={handleSaveRolePermissions}
-        canManageWings={can('manageWingsAndUnits')}
-        canManageUsers={can('manageUsers')}
-        canManageCloudAndNotice={can('manageCloudAndNotice')}
+        canManageWings={canManage('manageWingsAndUnits')}
+        canManageUsers={canManage('manageUsers')}
+        canManageCloudAndNotice={canManage('manageCloudAndNotice')}
+        isGuestView={isGuestSession}
         loginHistory={
-          isRestrictedUser && verifiedOperator
-            ? loginHistory.filter((h) => h.bdNo === verifiedOperator.bdNo)
-            : loginHistory
+          isGuestSession
+            ? []
+            : isRestrictedUser && verifiedOperator
+              ? loginHistory.filter((h) => h.bdNo === verifiedOperator.bdNo)
+              : loginHistory
         }
         onRefreshLoginHistory={handlePullLatestFromCloud}
         onClearLoginHistory={handleClearLoginHistory}
         onSyncNowToCloud={handleSyncNowToCloud}
         onPullLatestFromCloud={handlePullLatestFromCloud}
-        appNotice={appNotice}
+        appNotice={isGuestSession ? '' : appNotice}
         onSaveAppNotice={handleSaveAppNotice}
         onRequireAuth={requireOperatorAuth}
-        dayState={dayState}
-        wings={visibleWings}
-        restrictedUnitName={isRestrictedUser && loggedInUserUnit ? loggedInUserUnit : undefined}
+        dayState={viewDayState}
+        wings={
+          isGuestSession
+            ? visibleWings.map((w) => ({ ...w, preparedBy: undefined }))
+            : visibleWings
+        }
+        restrictedUnitName={isRestrictedUser && userCanonicalUnit ? userCanonicalUnit : undefined}
         onAddUnitToWing={handleAddUnitToWing}
         onUpdateUnitConfig={handleUpdateUnitConfig}
         onDeleteUnitFromWing={handleDeleteUnitFromWing}
@@ -2234,10 +2426,11 @@ export default function App() {
       <PrintReportModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
-        dayState={dayState}
+        dayState={viewDayState}
         activeTab={activeTab}
-        activeWing={activeWing}
+        activeWing={isGuestSession ? { ...activeWing, preparedBy: undefined } : activeWing}
         unitSubTab={unitSubTab === 'nominalRoll' ? 'nominalRoll' : 'state'}
+        canDownloadExports={canManageRolePermission(currentRole, 'exportPrintReport', rolePermissions)}
       />
 
       <OfflineIndicator />

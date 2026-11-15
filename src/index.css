@@ -202,6 +202,20 @@ html[data-theme="light"] .bg-purple-600\/30 {
   background-color: #f3e8ff !important;
 }
 
+html[data-theme="light"] .bg-sky-950\/40,
+html[data-theme="light"] .bg-sky-950\/35,
+html[data-theme="light"] .bg-sky-600\/25 {
+  background-color: #e0f2fe !important;
+}
+
+html[data-theme="light"] .bg-emerald-600\/25 {
+  background-color: #d1fae5 !important;
+}
+
+html[data-theme="light"] .bg-rose-600\/25 {
+  background-color: #ffe4e6 !important;
+}
+
 html[data-theme="light"] .bg-indigo-950\/40,
 html[data-theme="light"] .hover\:bg-indigo-950\/60:hover {
   background-color: #eef2ff !important;

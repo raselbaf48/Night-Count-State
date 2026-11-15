@@ -1,28 +1,38 @@
 export type Rank = 'AC' | 'AC-1' | 'AC-2' | 'LAC' | 'Cpl' | 'Sgt' | 'Flt Sgt' | 'WO' | 'MWO';
 
-export type UserRole = 'OWNER' | 'SUPER_ADMIN' | 'USER';
+export type UserRole = 'OWNER' | 'SUPER_ADMIN' | 'ADMIN' | 'USER';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 
+export type PermissionLevel = 'hide' | 'view' | 'manage';
+
 export type RolePermissionKey =
+  | 'menuOverview'
   | 'viewConsolidatedState'
   | 'editQuickSqnCount'
+  | 'editPreparedBy'
+  | 'exportPrintReport'
+  | 'viewUpdateLog'
+  | 'menuSquadrons'
   | 'viewUnitDetails'
   | 'editUnitDisposals'
   | 'manageNominalRoll'
   | 'deleteNominalRollAirman'
-  | 'editPreparedBy'
-  | 'exportPrintReport'
-  | 'viewUpdateLog'
+  | 'viewUnitUpdateLog'
   | 'accessSettings'
+  | 'settingsTheme'
   | 'manageWingsAndUnits'
   | 'manageUsers'
-  | 'manageCloudAndNotice';
+  | 'settingsPermissions'
+  | 'settingsHistory'
+  | 'manageCloudAndNotice'
+  | 'settingsNotice';
 
-export type RolePermissions = Record<RolePermissionKey, boolean>;
+export type RolePermissions = Record<RolePermissionKey, PermissionLevel>;
 
 export interface RolePermissionsConfig {
   SUPER_ADMIN: RolePermissions;
+  ADMIN: RolePermissions;
   USER: RolePermissions;
   GUEST: RolePermissions;
 }

@@ -8,6 +8,7 @@ interface StateUpdateLogViewProps {
   activeWing?: WingConfig;
   unitFilter?: string;
   lockedUnit?: string;
+  isGuestView?: boolean;
 }
 
 export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
@@ -16,6 +17,7 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
   activeWing,
   unitFilter,
   lockedUnit,
+  isGuestView = false,
 }) => {
   const effectiveUnitFilter = lockedUnit || unitFilter;
   const [searchQuery, setSearchQuery] = useState('');
@@ -176,7 +178,39 @@ export const StateUpdateLogView: React.FC<StateUpdateLogViewProps> = ({
 
         {/* Log Table */}
         <div className="overflow-x-auto">
-          {logs.length === 0 ? (
+          {isGuestView ? (
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-[#0e192d]/80 border-b border-slate-800 text-slate-300 uppercase text-[11px] tracking-wider">
+                  <th className="py-3 px-4 font-semibold whitespace-nowrap">Ser</th>
+                  <th className="py-3 px-4 font-semibold whitespace-nowrap">Time</th>
+                  <th className="py-3 px-4 font-semibold whitespace-nowrap">BD No</th>
+                  <th className="py-3 px-4 font-semibold whitespace-nowrap">Updated By</th>
+                  <th className="py-3 px-4 font-semibold whitespace-nowrap">Trade &amp; Flight</th>
+                  <th className="py-3 px-4 font-semibold whitespace-nowrap">Unit / Sqn</th>
+                  <th className="py-3 px-4 font-semibold whitespace-nowrap">Section</th>
+                  <th className="py-3 px-4 font-semibold">Update Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                <tr>
+                  <td colSpan={8} className="py-2.5 px-4 bg-sky-950/35 text-center text-[11px] font-semibold text-sky-300">
+                    Guest Preview Mode — Format Only (Audit log entries hidden)
+                  </td>
+                </tr>
+                <tr className="text-slate-500 italic">
+                  <td className="py-3 px-4">1</td>
+                  <td className="py-3 px-4 whitespace-nowrap">[Time]</td>
+                  <td className="py-3 px-4 whitespace-nowrap">[BD No]</td>
+                  <td className="py-3 px-4 whitespace-nowrap">[Rank Name]</td>
+                  <td className="py-3 px-4 whitespace-nowrap">[Trade • Flight]</td>
+                  <td className="py-3 px-4 whitespace-nowrap">[Unit / Sqn]</td>
+                  <td className="py-3 px-4 whitespace-nowrap">[Section]</td>
+                  <td className="py-3 px-4">[Action Summary]</td>
+                </tr>
+              </tbody>
+            </table>
+          ) : logs.length === 0 ? (
             <div className="px-6 py-12 text-center text-slate-400 text-xs">
               No state updates recorded for {dayState.formattedDisplayDate}
               {scope === 'unit' && unitFilter

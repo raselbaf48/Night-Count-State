@@ -127,7 +127,7 @@
         },
         "rolePermissions": {
           "type": "object",
-          "description": "Role-based access limitation switches for SUPER_ADMIN, USER, and GUEST"
+          "description": "Role-based access limitation switches for SUPER_ADMIN, ADMIN, USER, and GUEST"
         },
         "createdAt": {
           "type": "string",
