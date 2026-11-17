@@ -1093,6 +1093,32 @@ export function saveHiddenQuickEditDisposals(list: string[]): void {
   }
 }
 
+const UNHIDDEN_QUICK_EDIT_ORDER_KEY = 'night_count_unhidden_quick_edit_order';
+
+export function loadUnhiddenQuickEditOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(UNHIDDEN_QUICK_EDIT_ORDER_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return [];
+}
+
+export function saveUnhiddenQuickEditOrder(list: string[]): void {
+  try {
+    const unique = Array.from(new Set(list.map((s) => s.trim()).filter(Boolean)));
+    localStorage.setItem(UNHIDDEN_QUICK_EDIT_ORDER_KEY, JSON.stringify(unique));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export function loadSavedCustomDisposals(): string[] {
   try {
     const raw = localStorage.getItem(CUSTOM_DISPOSALS_KEY);

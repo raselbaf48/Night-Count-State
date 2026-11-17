@@ -9,6 +9,8 @@ import {
   loadSavedCustomDisposals,
   loadHiddenQuickEditDisposals,
   saveHiddenQuickEditDisposals,
+  loadUnhiddenQuickEditOrder,
+  saveUnhiddenQuickEditOrder,
   shouldUseNominalRollForUnit,
   summarizeUnitRowFromCounts,
 } from '../utils/storage';
@@ -44,7 +46,8 @@ interface ConsolidatedWingViewProps {
 }
 
 const STANDARD_DISPOSAL_ITEMS = DISPOSAL_OPTIONS.filter((o) => o.value !== '-');
-const ALWAYS_VISIBLE_DISPOSALS = new Set(['TDY', 'Leave', 'GD', 'Office Duty']);
+const FIXED_DISPOSAL_ORDER = ['TDY', 'Leave', 'GD', 'Office Duty'];
+const ALWAYS_VISIBLE_DISPOSALS = new Set(FIXED_DISPOSAL_ORDER);
 
 export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   dayState,
@@ -71,10 +74,16 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   const [hiddenDisposals, setHiddenDisposals] = useState<string[]>(() =>
     loadHiddenQuickEditDisposals().filter((k) => !ALWAYS_VISIBLE_DISPOSALS.has(k))
   );
+  const [unhiddenOrder, setUnhiddenOrder] = useState<string[]>(() =>
+    loadUnhiddenQuickEditOrder().filter((k) => !ALWAYS_VISIBLE_DISPOSALS.has(k))
+  );
   useEffect(() => {
     if (!editingSqn) {
       setHiddenDisposals(
         loadHiddenQuickEditDisposals().filter((k) => !ALWAYS_VISIBLE_DISPOSALS.has(k))
+      );
+      setUnhiddenOrder(
+        loadUnhiddenQuickEditOrder().filter((k) => !ALWAYS_VISIBLE_DISPOSALS.has(k))
       );
     }
   }, [dayState, editingSqn]);
@@ -316,8 +325,16 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
   const toggleHideDisposal = (key: string) => {
     if (ALWAYS_VISIBLE_DISPOSALS.has(key)) return;
     setHiddenDisposals((prev) => {
-      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      const wasHidden = prev.includes(key);
+      const next = wasHidden ? prev.filter((k) => k !== key) : [...prev, key];
       saveHiddenQuickEditDisposals(next);
+      setUnhiddenOrder((prevOrder) => {
+        const nextOrder = wasHidden
+          ? [...prevOrder.filter((k) => k !== key), key]
+          : prevOrder.filter((k) => k !== key);
+        saveUnhiddenQuickEditOrder(nextOrder);
+        return nextOrder;
+      });
       onSettingsChanged?.();
       return next;
     });
@@ -331,14 +348,18 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
       ...prev,
       [trimmed]: Math.max(0, Number(newCustomAmount) || 0),
     }));
-    // Ensure newly added custom disposal is visible (not hidden)
+    // Ensure newly added custom disposal is visible (not hidden) and appended to unhidden order after Office Duty
     setHiddenDisposals((prev) => {
-      if (!prev.includes(trimmed)) return prev;
       const next = prev.filter((k) => k !== trimmed);
       saveHiddenQuickEditDisposals(next);
-      onSettingsChanged?.();
       return next;
     });
+    setUnhiddenOrder((prevOrder) => {
+      const nextOrder = [...prevOrder.filter((k) => k !== trimmed), trimmed];
+      saveUnhiddenQuickEditOrder(nextOrder);
+      return nextOrder;
+    });
+    onSettingsChanged?.();
     setNewCustomName('');
     setNewCustomAmount(0);
     setIsAddingCustom(false);
@@ -491,12 +512,26 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     const hiddenSet = new Set(
       hiddenDisposals.filter((k) => !ALWAYS_VISIBLE_DISPOSALS.has(k))
     );
-    const visibleItems = allListItems.filter(
-      (item) =>
-        ALWAYS_VISIBLE_DISPOSALS.has(item.key) ||
-        !hiddenSet.has(item.key) ||
-        getVal(item.key) > 0
-    );
+    const fixedVisibleItems = FIXED_DISPOSAL_ORDER.map((key) =>
+      allListItems.find((item) => item.key === key)
+    ).filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+    const nonFixedVisibleItems = allListItems
+      .filter(
+        (item) =>
+          !ALWAYS_VISIBLE_DISPOSALS.has(item.key) &&
+          (!hiddenSet.has(item.key) || getVal(item.key) > 0)
+      )
+      .sort((a, b) => {
+        const idxA = unhiddenOrder.indexOf(a.key);
+        const idxB = unhiddenOrder.indexOf(b.key);
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return 0;
+      });
+
+    const visibleItems = [...fixedVisibleItems, ...nonFixedVisibleItems];
     const hiddenItems = allListItems.filter(
       (item) =>
         !ALWAYS_VISIBLE_DISPOSALS.has(item.key) &&
