@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { X, Printer, FileText, Image as ImageIcon, Check } from 'lucide-react';
 import { DayState, WingConfig } from '../types/nightCount';
 import {
-  calculateUnitSummarizedRow,
   categorizeUnitDisposals,
+  getEffectiveUnitSummarizedRow,
   getFlyingWingSummary,
   getUnitAirmen,
   getUnitRemarks,
@@ -99,9 +99,11 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
 
   // --- Mode 3: Single Unit Night Count State Data ---
   const summarizedUnit = !isFlyingWing
-    ? calculateUnitSummarizedRow(dayState, unitName)
-    : calculateUnitSummarizedRow(dayState, '155 UASU BAF');
-  const currentRemarks = !isFlyingWing ? getUnitRemarks(dayState, unitName) : '';
+    ? getEffectiveUnitSummarizedRow(dayState, unitName)
+    : getEffectiveUnitSummarizedRow(dayState, '155 UASU BAF');
+  const currentRemarks = !isFlyingWing
+    ? summarizedUnit.remarks || getUnitRemarks(dayState, unitName)
+    : '';
 
   const unitStateAirmen = !isFlyingWing ? getUnitAirmen(dayState, unitName) : [];
   const unitDisposals = !isFlyingWing ? dayState.disposals.filter((d) => d.unit === unitName) : [];

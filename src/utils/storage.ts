@@ -1016,6 +1016,23 @@ export function createStateUpdateLog(
   };
 }
 
+export function hasUnitUpdatedStateForDate(dayState: DayState, unitName: string): boolean {
+  const cleanTarget = (unitName || '').trim().toLowerCase();
+  if (!cleanTarget) return false;
+  const logs = dayState.updateLogs || [];
+  const hasLogEntry = logs.some((entry) => {
+    if (!entry || !entry.unitName) return false;
+    if (entry.area === 'Prepared By' || entry.area === 'Custom Disposal') return false;
+    return entry.unitName.trim().toLowerCase() === cleanTarget;
+  });
+  if (hasLogEntry) return true;
+  const row = (dayState.consolidatedUnits || []).find(
+    (u) => (u.sqnUnit || '').trim().toLowerCase() === cleanTarget
+  );
+  if (row?.manuallyEdited) return true;
+  return false;
+}
+
 export function loadSavedPreparedBy(): PreparedByInfo | null {
   try {
     const raw = localStorage.getItem(PREPARED_BY_KEY);
@@ -1445,6 +1462,226 @@ function getAllSavedDatesFromStorage(): string[] {
   return dates.sort();
 }
 
+const MASTER_ROSTER_KEY = 'night_count_master_roster';
+
+interface MasterRosterSnapshot {
+  airmen155: Airman[];
+  unitAirmen: Record<string, Airman[]>;
+  deletedIds: string[];
+  deletedBds: string[];
+  updatedAt: number;
+}
+
+function stripDaySpecificAirmanStatus(airman: Airman): Airman {
+  return {
+    ...airman,
+    status: 'on_parade',
+    currentDuty: undefined,
+  };
+}
+
+export function loadMasterRosterSnapshot(): MasterRosterSnapshot | null {
+  try {
+    const raw = localStorage.getItem(MASTER_ROSTER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      airmen155: Array.isArray(parsed.airmen155) ? parsed.airmen155 : [],
+      unitAirmen:
+        parsed.unitAirmen && typeof parsed.unitAirmen === 'object' ? parsed.unitAirmen : {},
+      deletedIds: Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [],
+      deletedBds: Array.isArray(parsed.deletedBds) ? parsed.deletedBds : [],
+      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveMasterRosterSnapshot(snapshot: MasterRosterSnapshot): void {
+  try {
+    localStorage.setItem(MASTER_ROSTER_KEY, JSON.stringify(snapshot));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function mergeUnitRosterWithMaster(
+  dayList: Airman[],
+  masterList: Airman[],
+  deletedIdsSet: Set<string>,
+  deletedBdsSet: Set<string>
+): Airman[] {
+  const existingById = new Map<string, Airman>();
+  const existingByBd = new Map<string, Airman>();
+  dayList.forEach((a) => {
+    if (!a) return;
+    const cleanBd = (a.bdNo || '').trim();
+    if (deletedIdsSet.has(a.id) || (cleanBd && deletedBdsSet.has(cleanBd))) return;
+    existingById.set(a.id, a);
+    if (cleanBd) existingByBd.set(cleanBd, a);
+  });
+
+  const merged = masterList
+    .filter((m) => {
+      if (!m) return false;
+      const cleanBd = (m.bdNo || '').trim();
+      return !deletedIdsSet.has(m.id) && !(cleanBd && deletedBdsSet.has(cleanBd));
+    })
+    .map((m) => {
+      const cleanBd = (m.bdNo || '').trim();
+      const prev = existingById.get(m.id) || (cleanBd ? existingByBd.get(cleanBd) : undefined);
+      if (prev) {
+        return {
+          ...prev,
+          id: m.id,
+          rank: m.rank,
+          name: m.name,
+          bdNo: m.bdNo,
+          trade: m.trade,
+          flight: m.flight,
+          unit: m.unit,
+          role: m.role ?? prev.role,
+          adminPin: m.adminPin,
+        };
+      }
+      return {
+        ...m,
+        status: 'on_parade' as const,
+        currentDuty: undefined,
+      };
+    });
+
+  return sortAirmenBySeniority(merged);
+}
+
+export function applyMasterRosterToDayState(state: DayState): DayState {
+  const master = loadMasterRosterSnapshot();
+  if (!master) return state;
+
+  const deletedIdsSet = new Set(master.deletedIds || []);
+  const deletedBdsSet = new Set(master.deletedBds || []);
+
+  const nextAirmen155 =
+    master.airmen155.length > 0 || deletedIdsSet.size > 0 || deletedBdsSet.size > 0
+      ? mergeUnitRosterWithMaster(
+          state.airmen155 || [],
+          master.airmen155,
+          deletedIdsSet,
+          deletedBdsSet
+        )
+      : state.airmen155;
+
+  const nextUnitAirmen: Record<string, Airman[]> = { ...(state.unitAirmen || {}) };
+  const allUnitKeys = new Set([
+    ...Object.keys(nextUnitAirmen),
+    ...Object.keys(master.unitAirmen || {}),
+  ]);
+  allUnitKeys.forEach((unitName) => {
+    if (unitName === '155 UASU BAF') return;
+    if (Array.isArray(master.unitAirmen?.[unitName])) {
+      nextUnitAirmen[unitName] = mergeUnitRosterWithMaster(
+        nextUnitAirmen[unitName] || [],
+        master.unitAirmen[unitName],
+        deletedIdsSet,
+        deletedBdsSet
+      );
+    } else if (Array.isArray(nextUnitAirmen[unitName])) {
+      nextUnitAirmen[unitName] = nextUnitAirmen[unitName].filter((a) => {
+        const cleanBd = (a.bdNo || '').trim();
+        return !deletedIdsSet.has(a.id) && !(cleanBd && deletedBdsSet.has(cleanBd));
+      });
+    }
+  });
+
+  const validAirmanIds = new Set<string>();
+  nextAirmen155.forEach((a) => validAirmanIds.add(a.id));
+  Object.values(nextUnitAirmen).forEach((list) => {
+    list.forEach((a) => validAirmanIds.add(a.id));
+  });
+
+  const nextDisposals = (state.disposals || []).filter((d) => {
+    if (!d.airmanId) return true;
+    if (deletedIdsSet.has(d.airmanId)) return false;
+    return validAirmanIds.has(d.airmanId);
+  });
+
+  return {
+    ...state,
+    airmen155: nextAirmen155,
+    unitAirmen: nextUnitAirmen,
+    disposals: nextDisposals,
+  };
+}
+
+export function syncRosterChangeAcrossStorage(
+  sourceState: DayState,
+  deletedAirman?: { id?: string; bdNo?: string }
+): DayState[] {
+  const prevMaster = loadMasterRosterSnapshot();
+  const currentIds = new Set<string>();
+  const currentBds = new Set<string>();
+
+  const clean155 = (sourceState.airmen155 || []).map((a) => {
+    currentIds.add(a.id);
+    if (a.bdNo?.trim()) currentBds.add(a.bdNo.trim());
+    return stripDaySpecificAirmanStatus(a);
+  });
+
+  const cleanUnitMap: Record<string, Airman[]> = {};
+  Object.entries(sourceState.unitAirmen || {}).forEach(([u, list]) => {
+    if (u === '155 UASU BAF') return;
+    cleanUnitMap[u] = (list || []).map((a) => {
+      currentIds.add(a.id);
+      if (a.bdNo?.trim()) currentBds.add(a.bdNo.trim());
+      return stripDaySpecificAirmanStatus(a);
+    });
+  });
+
+  const deletedIdsSet = new Set<string>(
+    (prevMaster?.deletedIds || []).filter((id) => !currentIds.has(id))
+  );
+  const deletedBdsSet = new Set<string>(
+    (prevMaster?.deletedBds || []).filter((bd) => !currentBds.has(bd))
+  );
+  if (deletedAirman?.id && !currentIds.has(deletedAirman.id)) {
+    deletedIdsSet.add(deletedAirman.id);
+  }
+  if (deletedAirman?.bdNo?.trim() && !currentBds.has(deletedAirman.bdNo.trim())) {
+    deletedBdsSet.add(deletedAirman.bdNo.trim());
+  }
+
+  const now = Date.now();
+  saveMasterRosterSnapshot({
+    airmen155: clean155,
+    unitAirmen: cleanUnitMap,
+    deletedIds: Array.from(deletedIdsSet),
+    deletedBds: Array.from(deletedBdsSet),
+    updatedAt: now,
+  });
+
+  const modifiedStates: DayState[] = [];
+  const allDates = getAllSavedDatesFromStorage();
+  for (const d of allDates) {
+    if (d === sourceState.date) continue;
+    try {
+      const raw = localStorage.getItem(`${STORAGE_PREFIX}${d}`);
+      if (!raw) continue;
+      const parsed = normalizeAndMigrateParsedState(JSON.parse(raw));
+      const updated = applyMasterRosterToDayState(parsed);
+      updated.consolidatedUnits = syncConsolidated155Row(updated.consolidatedUnits, updated);
+      updated.lastUpdatedAt = now;
+      localStorage.setItem(`${STORAGE_PREFIX}${d}`, JSON.stringify(updated));
+      modifiedStates.push(updated);
+    } catch {
+      // ignore invalid date entry
+    }
+  }
+
+  return modifiedStates;
+}
+
 export function isBlankUnitRow(row?: UnitRowState | null): boolean {
   if (!row) return true;
   if (
@@ -1467,6 +1704,118 @@ export function isBlankUnitRow(row?: UnitRowState | null): boolean {
   const trimmedRmks = (row.rmks || '').trim().toLowerCase();
   if (trimmedRmks && trimmedRmks !== 'nil') return false;
   return true;
+}
+
+export function shouldUseNominalRollForUnit(
+  dayState: DayState,
+  row?: UnitRowState | null
+): boolean {
+  if (!row) return false;
+  if (row.manuallyEdited === true) {
+    return false;
+  }
+  if (row.sqnUnit === '155 UASU BAF') {
+    return true;
+  }
+  const airmenCount = getUnitAirmen(dayState, row.sqnUnit).length;
+  if (airmenCount === 0) {
+    return false;
+  }
+  const unitDisposalsCount = (dayState.disposals || []).filter(
+    (d) => d.unit === row.sqnUnit
+  ).length;
+  // If a squadron has a carried-forward Quick Edit strength greater than the 1-2 users who signed up for login,
+  // and no Nominal Roll disposals have been set on it, preserve its Quick Edit count!
+  if ((row.totalStr || 0) > airmenCount && unitDisposalsCount === 0) {
+    return false;
+  }
+  return true;
+}
+
+export function summarizeUnitRowFromCounts(
+  row: UnitRowState,
+  savedCustomNames: string[] = []
+): UnitSummarizedRow {
+  const totalStr = row.totalStr || 0;
+  const detTdy = row.detTdy || 0;
+  const effStr = Math.max(0, totalStr - detTdy);
+  const leave = row.leave || 0;
+  const course = row.course || 0;
+  const awolDetention = (row.awol || 0) + (row.detention || 0);
+  const sickReport = row.sickReport || 0;
+  const edExPpgf = (row.ed || 0) + (row.exPpgf || 0);
+  const cmhBnsBshQmt =
+    (row.cmh || 0) + (row.bns || 0) + (row.bsh || 0) + (row.quarantine || 0);
+  const ucUBoard = (row.uc || 0) + (row.uBoard || 0);
+  const officeDuty = (row.officeDuty || 0) + (row.canteen || 0) + (row.bakery || 0);
+  const aftNiFlgNiDuty = (row.aftFlg || 0) + (row.niFlg || 0) + (row.niDuty || 0);
+  const gdTfAirfieldDuty =
+    (row.baseSecurityGd || 0) + (row.baseTaskforceBtf || 0) + (row.airfieldDuty || 0);
+  const driving = row.driving || 0;
+
+  const customKeys = Array.from(
+    new Set([...savedCustomNames, ...Object.keys(row.customDisposals || {})])
+  ).filter((name) => name.trim().length > 0);
+
+  const customDisposals: Record<string, number> = {};
+  let customTotal = 0;
+  customKeys.forEach((name) => {
+    const val = row.customDisposals?.[name] || 0;
+    customDisposals[name] = val;
+    customTotal += val;
+  });
+
+  const totalOutParade =
+    leave +
+    course +
+    awolDetention +
+    sickReport +
+    edExPpgf +
+    cmhBnsBshQmt +
+    ucUBoard +
+    officeDuty +
+    aftNiFlgNiDuty +
+    gdTfAirfieldDuty +
+    driving +
+    customTotal;
+
+  const onParade = Math.max(0, effStr - totalOutParade);
+
+  return {
+    sqnUnit: row.sqnUnit,
+    totalStr,
+    detTdy,
+    effStr,
+    leave,
+    course,
+    awolDetention,
+    sickReport,
+    edExPpgf,
+    cmhBnsBshQmt,
+    ucUBoard,
+    officeDuty,
+    aftNiFlgNiDuty,
+    gdTfAirfieldDuty,
+    driving,
+    customDisposals,
+    totalOutParade,
+    onParade,
+    remarks: row.rmks || '',
+  };
+}
+
+export function getEffectiveUnitSummarizedRow(
+  dayState: DayState,
+  unitName: string
+): UnitSummarizedRow {
+  const row = dayState.consolidatedUnits?.find(
+    (u) => u.sqnUnit.toLowerCase() === unitName.toLowerCase()
+  );
+  if (row && !shouldUseNominalRollForUnit(dayState, row)) {
+    const savedCustom = dayState.savedCustomDisposals ?? loadSavedCustomDisposals();
+    return summarizeUnitRowFromCounts(row, savedCustom);
+  }
+  return calculateUnitSummarizedRow(dayState, unitName);
 }
 
 function cloneCarriedUnitRow(priorRow: UnitRowState): UnitRowState {
@@ -1499,8 +1848,15 @@ export function carryForwardPriorUnitRows(
     }
   }
   if (fallbackPrior && fallbackPrior.date && fallbackPrior.date < state.date) {
-    if (!priorByDate.has(fallbackPrior.date)) {
-      priorByDate.set(fallbackPrior.date, normalizeAndMigrateParsedState(deepCloneDayState(fallbackPrior)));
+    const existingLocal = priorByDate.get(fallbackPrior.date);
+    if (
+      !existingLocal ||
+      (fallbackPrior.lastUpdatedAt || 0) >= (existingLocal.lastUpdatedAt || 0)
+    ) {
+      priorByDate.set(
+        fallbackPrior.date,
+        normalizeAndMigrateParsedState(deepCloneDayState(fallbackPrior))
+      );
     }
   }
 
@@ -1512,27 +1868,40 @@ export function carryForwardPriorUnitRows(
 
   let changed = false;
   const nextUnits = state.consolidatedUnits.map((u) => {
-    const hasNominalRoll =
-      u.sqnUnit === '155 UASU BAF' || getUnitAirmen(state, u.sqnUnit).length > 0;
-    if (hasNominalRoll) return u;
-
     // Never overwrite a row manually edited on this specific date
     if (u.manuallyEdited === true) return u;
 
-    const shouldCarry = u.manuallyEdited === false || isBlankUnitRow(u);
+    // For 155 UASU BAF, keep its live Nominal Roll calculation unless it was manually edited on this date
+    if (u.sqnUnit === '155 UASU BAF') return u;
+
+    const airmenCount = getUnitAirmen(state, u.sqnUnit).length;
+    const unitDisposalsCount = (state.disposals || []).filter(
+      (d) => d.unit === u.sqnUnit
+    ).length;
+
+    // If this unit actively uses Nominal Roll disposals on this date, keep its Nominal Roll summary
+    if (airmenCount > 0 && unitDisposalsCount > 0 && (u.totalStr || 0) <= airmenCount) {
+      return u;
+    }
+
+    const shouldCarry =
+      u.manuallyEdited === false ||
+      isBlankUnitRow(u) ||
+      (airmenCount > 0 && unitDisposalsCount === 0 && (u.totalStr || 0) <= airmenCount);
     if (!shouldCarry) return u;
 
     for (const priorDay of sortedPriorDays) {
       const priorRow = priorDay.consolidatedUnits?.find((p) => p.sqnUnit === u.sqnUnit);
       if (!priorRow) continue;
-      if (u.manuallyEdited === false) {
-        if (!isBlankUnitRow(priorRow) || priorRow.manuallyEdited === true) {
+      if (airmenCount > 0 && (priorRow.totalStr || 0) <= airmenCount && !priorRow.manuallyEdited) {
+        continue;
+      }
+      if (!isBlankUnitRow(priorRow) || priorRow.manuallyEdited === true) {
+        const cloned = cloneCarriedUnitRow(priorRow);
+        if (JSON.stringify(cloned) !== JSON.stringify(u)) {
           changed = true;
-          return cloneCarriedUnitRow(priorRow);
         }
-      } else if (!isBlankUnitRow(priorRow)) {
-        changed = true;
-        return cloneCarriedUnitRow(priorRow);
+        return cloned;
       }
     }
     return u;
@@ -1545,73 +1914,92 @@ export function carryForwardPriorUnitRows(
   };
 }
 
+export function propagatePriorDayUpdateToLaterDays(updatedPriorDay: DayState): DayState[] {
+  const modifiedLaterDays: DayState[] = [];
+  if (!updatedPriorDay?.date) return modifiedLaterDays;
+
+  const laterDates = getAllSavedDatesFromStorage().filter((d) => d > updatedPriorDay.date);
+  const now = Date.now();
+  for (const d of laterDates) {
+    try {
+      const raw = localStorage.getItem(`${STORAGE_PREFIX}${d}`);
+      if (!raw) continue;
+      const parsed = normalizeAndMigrateParsedState(JSON.parse(raw));
+      const carried = carryForwardPriorUnitRows(parsed, updatedPriorDay);
+      if (carried !== parsed) {
+        const toSave: DayState = {
+          ...carried,
+          lastUpdatedAt: now,
+        };
+        localStorage.setItem(`${STORAGE_PREFIX}${d}`, JSON.stringify(toSave));
+        modifiedLaterDays.push(toSave);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return modifiedLaterDays;
+}
+
 export function loadDayState(dateIso: string, fallbackSource?: DayState): DayState {
   try {
     const savedPreparedBy = loadSavedPreparedBy();
     const raw = localStorage.getItem(`${STORAGE_PREFIX}${dateIso}`);
     if (raw) {
       const parsed = JSON.parse(raw);
-      const normalized = normalizeAndMigrateParsedState(parsed);
+      const normalized = applyMasterRosterToDayState(normalizeAndMigrateParsedState(parsed));
       const withPreparedBy = savedPreparedBy
         ? { ...normalized, preparedBy: savedPreparedBy }
         : normalized;
-      return carryForwardPriorUnitRows(withPreparedBy, fallbackSource);
+      const carried = carryForwardPriorUnitRows(withPreparedBy, fallbackSource);
+      return {
+        ...carried,
+        consolidatedUnits: syncConsolidated155Row(carried.consolidatedUnits, carried),
+      };
     }
 
-    // Inherit ONLY from the closest prior saved day (< dateIso), never from a future day
+    // Inherit ONLY from the closest prior saved day (< dateIso), comparing local vs fallbackSource
     const savedDates = getAllSavedDatesFromStorage();
     const priorDates = savedDates.filter((d) => d < dateIso);
-    const sourceDate = priorDates.length > 0 ? priorDates[priorDates.length - 1] : null;
+    const localSourceDate = priorDates.length > 0 ? priorDates[priorDates.length - 1] : null;
 
-    if (sourceDate) {
-      const sourceRaw = localStorage.getItem(`${STORAGE_PREFIX}${sourceDate}`);
+    let localSourceState: DayState | null = null;
+    if (localSourceDate) {
+      const sourceRaw = localStorage.getItem(`${STORAGE_PREFIX}${localSourceDate}`);
       if (sourceRaw) {
-        const migratedSource = deepCloneDayState(
-          normalizeAndMigrateParsedState(JSON.parse(sourceRaw))
-        );
-        const inherited: DayState = {
-          ...migratedSource,
-          date: dateIso,
-          formattedDisplayDate: formatDateToMilitary(dateIso),
-          preparedBy: savedPreparedBy
-            ? { ...savedPreparedBy }
-            : { ...(migratedSource.preparedBy || INITIAL_PREPARED_BY) },
-          disposals: migratedSource.disposals.map((d) => ({ ...d, date: dateIso })),
-          consolidatedUnits: (migratedSource.consolidatedUnits || []).map((u) => ({
-            ...u,
-            manuallyEdited: false,
-          })),
-          savedCustomDisposals: loadSavedCustomDisposals().length
-            ? loadSavedCustomDisposals()
-            : [...(migratedSource.savedCustomDisposals || [])],
-          updateLogs: [],
-          rosterVersion: 7,
-        };
-        inherited.consolidatedUnits = syncConsolidated155Row(
-          inherited.consolidatedUnits,
-          inherited
-        );
-        return carryForwardPriorUnitRows(inherited, fallbackSource);
+        localSourceState = normalizeAndMigrateParsedState(JSON.parse(sourceRaw));
       }
     }
 
+    let chosenSource: DayState | null = localSourceState;
     if (fallbackSource && fallbackSource.date < dateIso) {
-      const clonedFallback = deepCloneDayState(fallbackSource);
+      if (
+        !chosenSource ||
+        fallbackSource.date > chosenSource.date ||
+        (fallbackSource.date === chosenSource.date &&
+          (fallbackSource.lastUpdatedAt || 0) > (chosenSource.lastUpdatedAt || 0))
+      ) {
+        chosenSource = normalizeAndMigrateParsedState(deepCloneDayState(fallbackSource));
+      }
+    }
+
+    if (chosenSource) {
+      const migratedSource = applyMasterRosterToDayState(deepCloneDayState(chosenSource));
       const inherited: DayState = {
-        ...clonedFallback,
+        ...migratedSource,
         date: dateIso,
         formattedDisplayDate: formatDateToMilitary(dateIso),
         preparedBy: savedPreparedBy
           ? { ...savedPreparedBy }
-          : { ...(clonedFallback.preparedBy || INITIAL_PREPARED_BY) },
-        disposals: clonedFallback.disposals.map((d) => ({ ...d, date: dateIso })),
-        consolidatedUnits: (clonedFallback.consolidatedUnits || []).map((u) => ({
+          : { ...(migratedSource.preparedBy || INITIAL_PREPARED_BY) },
+        disposals: migratedSource.disposals.map((d) => ({ ...d, date: dateIso })),
+        consolidatedUnits: (migratedSource.consolidatedUnits || []).map((u) => ({
           ...u,
           manuallyEdited: false,
         })),
         savedCustomDisposals: loadSavedCustomDisposals().length
           ? loadSavedCustomDisposals()
-          : [...(clonedFallback.savedCustomDisposals || [])],
+          : [...(migratedSource.savedCustomDisposals || [])],
         updateLogs: [],
         rosterVersion: 7,
       };
@@ -1626,7 +2014,7 @@ export function loadDayState(dateIso: string, fallbackSource?: DayState): DaySta
   }
   // Return clean default state with this date
   const savedPreparedBy = loadSavedPreparedBy();
-  const baseClone = deepCloneDayState(INITIAL_DAY_STATE);
+  const baseClone = applyMasterRosterToDayState(deepCloneDayState(INITIAL_DAY_STATE));
   return {
     ...baseClone,
     date: dateIso,
@@ -1641,7 +2029,12 @@ export function saveDayState(state: DayState): void {
   try {
     const customList = state.savedCustomDisposals ?? loadSavedCustomDisposals();
     saveCustomDisposalsList(customList);
-    const stateToSave = { ...state, savedCustomDisposals: customList, rosterVersion: 7 };
+    const stateToSave: DayState = {
+      ...state,
+      savedCustomDisposals: customList,
+      rosterVersion: 7,
+      lastUpdatedAt: typeof state.lastUpdatedAt === 'number' ? state.lastUpdatedAt : Date.now(),
+    };
     localStorage.setItem(`${STORAGE_PREFIX}${state.date}`, JSON.stringify(stateToSave));
     // Also track in history dates list
     const historyRaw = localStorage.getItem('night_count_history_dates');
@@ -1796,16 +2189,20 @@ export function calculateUnitSummarizedRow(
 export function calculate155SummarizedRow(
   dayState: DayState
 ): UnitSummarizedRow {
-  return calculateUnitSummarizedRow(dayState, '155 UASU BAF');
+  return getEffectiveUnitSummarizedRow(dayState, '155 UASU BAF');
 }
 
 export function syncConsolidated155Row(
   units: UnitRowState[],
-  dayState: DayState
+  dayState: DayState,
+  forceNominalUnit?: string
 ): UnitRowState[] {
   return units.map((u) => {
-    const hasNominalRoll = u.sqnUnit === '155 UASU BAF' || getUnitAirmen(dayState, u.sqnUnit).length > 0;
-    if (hasNominalRoll) {
+    const isForcedNominal =
+      Boolean(forceNominalUnit) &&
+      u.sqnUnit.toLowerCase() === forceNominalUnit!.trim().toLowerCase();
+
+    if (isForcedNominal || shouldUseNominalRollForUnit(dayState, u)) {
       const summarized = calculateUnitSummarizedRow(dayState, u.sqnUnit);
       return {
         ...u,
@@ -1815,21 +2212,32 @@ export function syncConsolidated155Row(
         leave: summarized.leave,
         course: summarized.course,
         awol: summarized.awolDetention,
+        detention: 0,
         sickReport: summarized.sickReport,
         ed: summarized.edExPpgf,
+        exPpgf: 0,
         cmh: summarized.cmhBnsBshQmt,
+        bns: 0,
+        bsh: 0,
+        quarantine: 0,
         uc: summarized.ucUBoard,
+        uBoard: 0,
         officeDuty: summarized.officeDuty,
         canteen: 0,
         bakery: 0,
+        aftFlg: 0,
+        niFlg: 0,
         niDuty: summarized.aftNiFlgNiDuty,
         baseSecurityGd: summarized.gdTfAirfieldDuty,
         baseTaskforceBtf: 0,
         airfieldDuty: 0,
         driving: summarized.driving,
+        customDisposals: { ...(summarized.customDisposals || {}) },
+        disposalCounts: isForcedNominal ? undefined : u.disposalCounts,
         totalOutParade: summarized.totalOutParade,
         onParadeForecast: summarized.onParade,
         rmks: summarized.remarks,
+        manuallyEdited: isForcedNominal ? false : u.manuallyEdited,
       };
     }
     return u;
@@ -1942,7 +2350,7 @@ export function getFlyingWingSummary(dayState: DayState, allowedUnits?: string[]
           (unitName) => rowByUnit.get(unitName.toLowerCase()) || createBlankUnitRow(unitName)
         )
       : dayState.consolidatedUnits;
-  const summarized155 = calculateUnitSummarizedRow(dayState, '155 UASU BAF');
+  const summarized155 = getEffectiveUnitSummarizedRow(dayState, '155 UASU BAF');
 
   const savedCustomNames = Array.from(
     new Set([
@@ -1953,9 +2361,7 @@ export function getFlyingWingSummary(dayState: DayState, allowedUnits?: string[]
   ).filter((name) => name.trim().length > 0);
 
   const rowSummaries: UnitSummarizedRow[] = units.map((row) => {
-    const hasNominalRoll =
-      row.sqnUnit === '155 UASU BAF' || getUnitAirmen(dayState, row.sqnUnit).length > 0;
-    if (hasNominalRoll) {
+    if (shouldUseNominalRollForUnit(dayState, row)) {
       const unitSum = calculateUnitSummarizedRow(dayState, row.sqnUnit);
       return {
         sqnUnit: row.sqnUnit,
@@ -1980,68 +2386,7 @@ export function getFlyingWingSummary(dayState: DayState, allowedUnits?: string[]
       };
     }
 
-    const totalStr = row.totalStr || 0;
-    const detTdy = row.detTdy || 0;
-    const effStr = Math.max(0, totalStr - detTdy);
-    const leave = row.leave || 0;
-    const course = row.course || 0;
-    const awolDetention = (row.awol || 0) + (row.detention || 0);
-    const sickReport = row.sickReport || 0;
-    const edExPpgf = (row.ed || 0) + (row.exPpgf || 0);
-    const cmhBnsBshQmt =
-      (row.cmh || 0) + (row.bns || 0) + (row.bsh || 0) + (row.quarantine || 0);
-    const ucUBoard = (row.uc || 0) + (row.uBoard || 0);
-    const officeDuty = (row.officeDuty || 0) + (row.canteen || 0) + (row.bakery || 0);
-    const aftNiFlgNiDuty = (row.aftFlg || 0) + (row.niFlg || 0) + (row.niDuty || 0);
-    const gdTfAirfieldDuty =
-      (row.baseSecurityGd || 0) + (row.baseTaskforceBtf || 0) + (row.airfieldDuty || 0);
-    const driving = row.driving || 0;
-
-    const customDisposals: Record<string, number> = {};
-    let customTotal = 0;
-    savedCustomNames.forEach((name) => {
-      const val = row.customDisposals?.[name] || 0;
-      customDisposals[name] = val;
-      customTotal += val;
-    });
-
-    const totalOutParade =
-      leave +
-      course +
-      awolDetention +
-      sickReport +
-      edExPpgf +
-      cmhBnsBshQmt +
-      ucUBoard +
-      officeDuty +
-      aftNiFlgNiDuty +
-      gdTfAirfieldDuty +
-      driving +
-      customTotal;
-
-    const onParade = Math.max(0, effStr - totalOutParade);
-
-    return {
-      sqnUnit: row.sqnUnit,
-      totalStr,
-      detTdy,
-      effStr,
-      leave,
-      course,
-      awolDetention,
-      sickReport,
-      edExPpgf,
-      cmhBnsBshQmt,
-      ucUBoard,
-      officeDuty,
-      aftNiFlgNiDuty,
-      gdTfAirfieldDuty,
-      driving,
-      customDisposals,
-      totalOutParade,
-      onParade,
-      remarks: row.rmks || '',
-    };
+    return summarizeUnitRowFromCounts(row, savedCustomNames);
   });
 
   const totals = rowSummaries.reduce(

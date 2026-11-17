@@ -198,4 +198,5 @@ export interface DayState {
   savedCustomDisposals?: string[];
   updateLogs?: StateUpdateLogEntry[];
   rosterVersion?: number;
+  lastUpdatedAt?: number;
 }

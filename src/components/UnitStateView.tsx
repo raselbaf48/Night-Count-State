@@ -1,8 +1,8 @@
 import React, { useRef } from 'react';
 import { DayState, Airman } from '../types/nightCount';
 import {
-  calculateUnitSummarizedRow,
   categorizeUnitDisposals,
+  getEffectiveUnitSummarizedRow,
   getUnitAirmen,
   getUnitRemarks,
   sortAirmenBySeniority,
@@ -34,8 +34,8 @@ export const UnitStateView: React.FC<UnitStateViewProps> = ({
 }) => {
   const remarksInputRef = useRef<HTMLInputElement>(null);
   const initialRemarksRef = useRef<string>('');
-  const summarized = calculateUnitSummarizedRow(dayState, unitName);
-  const currentRemarks = getUnitRemarks(dayState, unitName);
+  const summarized = getEffectiveUnitSummarizedRow(dayState, unitName);
+  const currentRemarks = summarized.remarks || getUnitRemarks(dayState, unitName);
 
   // Separate disposals: TDY, Duty On (ONLY GD/BTF/NTF/Airfield/Escort), Office, and individual sections for all others
   const unitAirmen = getUnitAirmen(dayState, unitName);

@@ -132,7 +132,6 @@ export function computeSettingsFingerprint(settings: CloudSettings): string {
     preparedBy: sanitizePreparedBy(settings.preparedBy),
     savedCustomDisposals: sanitizeStringArray(settings.savedCustomDisposals, 200, 100),
     hiddenQuickEditDisposals: sanitizeStringArray(settings.hiddenQuickEditDisposals, 200, 100),
-    recentUserIds: sanitizeStringArray(settings.recentUserIds, 3, 20),
     loginHistory: sanitizeLoginHistory(settings.loginHistory),
     appNotice: clampStr(settings.appNotice ?? '', 500),
     wings: sanitizeWingsConfig(settings.wings),
@@ -177,6 +176,16 @@ async function getDocPreferServer(pathCollection: string, docId: string) {
   }
 }
 
+function extractCloudTimestamp(data: Record<string, any>): number | undefined {
+  if (typeof data.lastUpdatedAt === 'number' && Number.isFinite(data.lastUpdatedAt)) {
+    return data.lastUpdatedAt;
+  }
+  if (data.updatedAt && typeof data.updatedAt.toMillis === 'function') {
+    return data.updatedAt.toMillis();
+  }
+  return undefined;
+}
+
 export async function downloadDayFromCloud(dateIso: string): Promise<DayState | null> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) return null;
   const path = `${DAYS_COLLECTION}/${dateIso}`;
@@ -197,6 +206,7 @@ export async function downloadDayFromCloud(dateIso: string): Promise<DayState | 
       savedCustomDisposals: Array.isArray(data.savedCustomDisposals) ? data.savedCustomDisposals : [],
       updateLogs: Array.isArray(data.updateLogs) ? data.updateLogs : [],
       rosterVersion: typeof data.rosterVersion === 'number' ? data.rosterVersion : 7,
+      lastUpdatedAt: extractCloudTimestamp(data),
     };
   } catch (err) {
     if (isOfflineOrUnavailableError(err)) {
@@ -225,7 +235,6 @@ export async function downloadFromCloudOnEnter(dateIso: string): Promise<CloudBo
         preparedBy: sanitizePreparedBy(s.preparedBy),
         savedCustomDisposals: sanitizeStringArray(s.savedCustomDisposals, 200, 100),
         hiddenQuickEditDisposals: sanitizeStringArray(s.hiddenQuickEditDisposals, 200, 100),
-        recentUserIds: sanitizeStringArray(s.recentUserIds, 3, 20),
         loginHistory: sanitizeLoginHistory(s.loginHistory),
         appNotice: clampStr(s.appNotice ?? '', 500),
         wings: Array.isArray(s.wings) ? sanitizeWingsConfig(s.wings) : undefined,
@@ -260,6 +269,7 @@ export async function downloadFromCloudOnEnter(dateIso: string): Promise<CloudBo
         savedCustomDisposals: Array.isArray(data.savedCustomDisposals) ? data.savedCustomDisposals : [],
         updateLogs: Array.isArray(data.updateLogs) ? data.updateLogs : [],
         rosterVersion: typeof data.rosterVersion === 'number' ? data.rosterVersion : 7,
+        lastUpdatedAt: extractCloudTimestamp(data),
       };
     }
 
@@ -388,7 +398,6 @@ export async function uploadSettingsToCloud(settings: CloudSettings): Promise<vo
     preparedBy: sanitizePreparedBy(settings.preparedBy),
     savedCustomDisposals: sanitizeStringArray(settings.savedCustomDisposals, 200, 100),
     hiddenQuickEditDisposals: sanitizeStringArray(settings.hiddenQuickEditDisposals, 200, 100),
-    recentUserIds: sanitizeStringArray(settings.recentUserIds, 3, 20),
     loginHistory: sanitizeLoginHistory(settings.loginHistory),
     appNotice: clampStr(settings.appNotice ?? '', 500),
     wings: sanitizeWingsConfig(settings.wings),

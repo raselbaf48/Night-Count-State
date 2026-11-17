@@ -550,6 +550,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     !isGuestView &&
     (isOwner ||
       (canManageUsers && canManageRolePermission(operatorRole, 'manageUsers', rolePermissions)));
+  const canAssignRole = isOwner || (operatorRole === 'SUPER_ADMIN' && canEditUsers);
   const canEditWings =
     !isGuestView &&
     (isOwner ||
@@ -725,7 +726,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
 
     const cleanPin = newUserAdminPin.trim();
-    const assignedRole: UserRole = isOwner ? newUserRole : 'USER';
+    const assignedRole: UserRole = canAssignRole
+      ? !isOwner && newUserRole === 'OWNER'
+        ? 'SUPER_ADMIN'
+        : newUserRole
+      : 'USER';
+    if (assignedRole !== 'USER' && (!cleanPin || cleanPin.length < 4)) {
+      setUserActionFeedback({
+        type: 'err',
+        text: `Super Admin Login PIN (minimum 4 digits) is MUST when assigning ${assignedRole} role.`,
+      });
+      return;
+    }
+    if (cleanPin && cleanPin.length < 4) {
+      setUserActionFeedback({
+        type: 'err',
+        text: 'Super Admin Login PIN must be at least 4 digits.',
+      });
+      return;
+    }
     onRequireAuth(() => {
       onAddAirmanFromSettings({
         rank: newUserRank,
@@ -799,10 +818,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
       return;
     }
+    const targetRole: UserRole = canAssignRole
+      ? !isOwner && editRole === 'OWNER' && selectedUser.role !== 'OWNER'
+        ? 'SUPER_ADMIN'
+        : editRole
+      : selectedUser.role || 'USER';
+
+    if (targetRole !== 'USER' && (!cleanPin || cleanPin.length < 4)) {
+      setProfileFeedback({
+        type: 'err',
+        text: `Super Admin Login PIN (minimum 4 digits) is MUST when promoting or saving a user as ${targetRole}.`,
+      });
+      return;
+    }
     if (cleanPin && cleanPin.length < 4) {
       setProfileFeedback({
         type: 'err',
-        text: 'Admin Login Portal PIN must be at least 4 characters (or leave blank to clear).',
+        text: 'Super Admin Login PIN must be at least 4 digits (or leave blank for regular USER).',
       });
       return;
     }
@@ -814,15 +846,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         bdNo: cleanBd,
         trade: editTrade.trim(),
         flight: editFlight.trim(),
-        ...(isOwner ? { role: editRole } : {}),
+        ...(canAssignRole ? { role: targetRole } : {}),
         adminPin: cleanPin,
       });
       setIsEditingProfile(false);
       setProfileFeedback({
         type: 'ok',
-        text: isOwner
-          ? 'User Role, Admin Login PIN & profile details saved.'
-          : 'Admin Login PIN & profile details saved.',
+        text: canAssignRole
+          ? 'User Role, Super Admin Login PIN & profile details saved.'
+          : 'Super Admin Login PIN & profile details saved.',
       });
     });
   };
@@ -1621,7 +1653,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <div className="flex items-center gap-2 text-sm font-bold text-white">
                             <UserCog className="w-4 h-4 text-emerald-400" />
                             <span>
-                              Edit Profile Details{isOwner ? ', Role & Admin PIN' : ' & Admin PIN'}
+                              Edit Profile Details{canAssignRole ? ', Role & Super Admin Login PIN' : ' & Super Admin Login PIN'}
                             </span>
                           </div>
                         </div>
@@ -1714,15 +1746,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <div className="border-t border-[#182844] pt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                              SYSTEM ROLE {!isOwner && <span className="text-amber-400">(Owner Only)</span>}
+                              SYSTEM ROLE {!canAssignRole && <span className="text-amber-400">(Owner / Super Admin Only)</span>}
                             </label>
                             <select
                               value={editRole}
-                              disabled={!isOwner}
+                              disabled={!canAssignRole || (!isOwner && selectedUser.role === 'OWNER')}
                               onChange={(e) => setEditRole(e.target.value as UserRole)}
                               className="w-full bg-[#060d1b] border border-[#1e3150] focus:border-emerald-500/60 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              <option value="OWNER">OWNER</option>
+                              {(isOwner || selectedUser.role === 'OWNER') && (
+                                <option value="OWNER">OWNER</option>
+                              )}
                               <option value="SUPER_ADMIN">SUPER_ADMIN</option>
                               <option value="ADMIN">ADMIN</option>
                               <option value="USER">USER</option>
@@ -1731,21 +1765,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                           <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                              ADMIN LOGIN PORTAL PIN
+                              SUPER ADMIN LOGIN PIN{' '}
+                              {editRole !== 'USER' ? (
+                                <span className="text-rose-400 font-extrabold">* (MUST)</span>
+                              ) : (
+                                <span className="text-slate-500">(Optional for USER)</span>
+                              )}
                             </label>
                             <div className="flex items-center gap-2">
                               <input
                                 type="text"
                                 inputMode="numeric"
                                 maxLength={12}
+                                required={editRole !== 'USER'}
                                 value={editAdminPin}
                                 onChange={(e) =>
                                   setEditAdminPin(e.target.value.replace(/\s/g, '').slice(0, 12))
                                 }
-                                placeholder="e.g. 1124 (blank = no PIN)"
-                                className="flex-1 bg-[#060d1b] border border-[#1e3150] focus:border-emerald-500/60 rounded-xl px-3 py-2 text-xs font-bold text-white tabular-nums outline-none"
+                                placeholder={
+                                  editRole !== 'USER'
+                                    ? 'Must set PIN (min 4 digits, e.g. 1124)'
+                                    : 'e.g. 1124 (blank = no PIN)'
+                                }
+                                className={`flex-1 bg-[#060d1b] border rounded-xl px-3 py-2 text-xs font-bold text-white tabular-nums outline-none ${
+                                  editRole !== 'USER' && editAdminPin.trim().length < 4
+                                    ? 'border-amber-500/70 focus:border-amber-400'
+                                    : 'border-[#1e3150] focus:border-emerald-500/60'
+                                }`}
                               />
-                              {editAdminPin && (
+                              {editAdminPin && editRole === 'USER' && (
                                 <button
                                   type="button"
                                   onClick={() => setEditAdminPin('')}
@@ -1755,6 +1803,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </button>
                               )}
                             </div>
+                            {editRole !== 'USER' && editAdminPin.trim().length < 4 && (
+                              <div className="text-[10px] font-semibold text-amber-300 mt-1">
+                                Promoting/saving as {editRole} requires a Login PIN (minimum 4 digits).
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -1872,10 +1925,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                           <div>
                             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                              ADMIN LOGIN PORTAL PIN
+                              SUPER ADMIN LOGIN PIN
                             </div>
                             <div className="text-xs sm:text-sm font-extrabold text-white tabular-nums mt-0.5">
-                              {selectedUser.adminPin ? selectedUser.adminPin : 'Not Set'}
+                              {selectedUser.adminPin
+                                ? selectedUser.adminPin
+                                : (selectedUser.role || 'USER') !== 'USER'
+                                  ? '1124 (Default)'
+                                  : 'Not Set'}
                             </div>
                           </div>
                         </div>
@@ -2108,15 +2165,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </div>
                           <div>
                             <label className="block text-[10px] font-semibold text-slate-400 mb-1">
-                              Role {!isOwner && <span className="text-amber-400">(Owner Only)</span>}
+                              Role {!canAssignRole && <span className="text-amber-400">(Owner / Super Admin Only)</span>}
                             </label>
                             <select
-                              value={isOwner ? newUserRole : 'USER'}
-                              disabled={!isOwner}
+                              value={canAssignRole ? newUserRole : 'USER'}
+                              disabled={!canAssignRole}
                               onChange={(e) => setNewUserRole(e.target.value as UserRole)}
                               className="w-full bg-[#09111f] border border-[#1e3150] rounded-lg px-2.5 py-1.5 text-xs text-white outline-none disabled:opacity-50"
                             >
-                              <option value="OWNER">OWNER</option>
+                              {isOwner && <option value="OWNER">OWNER</option>}
                               <option value="SUPER_ADMIN">SUPER_ADMIN</option>
                               <option value="ADMIN">ADMIN</option>
                               <option value="USER">USER</option>
@@ -2124,18 +2181,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </div>
                           <div className="sm:col-span-2">
                             <label className="block text-[10px] font-semibold text-slate-400 mb-1">
-                              Admin Login Portal PIN (Optional)
+                              Super Admin Login PIN{' '}
+                              {canAssignRole && newUserRole !== 'USER' ? (
+                                <span className="text-rose-400 font-extrabold">* (MUST)</span>
+                              ) : (
+                                <span className="text-slate-500">(Optional for USER)</span>
+                              )}
                             </label>
                             <input
                               type="text"
                               inputMode="numeric"
                               maxLength={12}
+                              required={canAssignRole && newUserRole !== 'USER'}
                               value={newUserAdminPin}
                               onChange={(e) =>
                                 setNewUserAdminPin(e.target.value.replace(/\s/g, '').slice(0, 12))
                               }
-                              placeholder="Optional PIN (e.g. 1124)"
-                              className="w-full bg-[#09111f] border border-[#1e3150] rounded-lg px-2.5 py-1.5 text-xs text-white tabular-nums outline-none"
+                              placeholder={
+                                canAssignRole && newUserRole !== 'USER'
+                                  ? 'Must set Login PIN (min 4 digits, e.g. 1124)'
+                                  : 'Optional PIN (e.g. 1124)'
+                              }
+                              className={`w-full bg-[#09111f] border rounded-lg px-2.5 py-1.5 text-xs text-white tabular-nums outline-none ${
+                                canAssignRole && newUserRole !== 'USER' && newUserAdminPin.trim().length < 4
+                                  ? 'border-amber-500/70'
+                                  : 'border-[#1e3150]'
+                              }`}
                             />
                           </div>
                         </div>

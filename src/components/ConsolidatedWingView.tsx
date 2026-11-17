@@ -2,14 +2,29 @@ import React, { useState, useEffect, useRef } from 'react';
 import { DayState, PreparedByInfo, UnitRowState, WingConfig } from '../types/nightCount';
 import {
   calculateUnitSummarizedRow,
+  getEffectiveUnitSummarizedRow,
   getUnitAirmen,
   getWingPreparedBy,
+  hasUnitUpdatedStateForDate,
   loadSavedCustomDisposals,
   loadHiddenQuickEditDisposals,
   saveHiddenQuickEditDisposals,
+  shouldUseNominalRollForUnit,
+  summarizeUnitRowFromCounts,
 } from '../utils/storage';
 import { createBlankUnitRow, DISPOSAL_OPTIONS } from '../data/initialData';
-import { Edit3, Check, X, Shield, ArrowLeft, Eye, EyeOff, Plus, RotateCcw } from 'lucide-react';
+import {
+  AlertCircle,
+  Edit3,
+  Check,
+  X,
+  Shield,
+  ArrowLeft,
+  Eye,
+  EyeOff,
+  Plus,
+  RotateCcw,
+} from 'lucide-react';
 
 interface ConsolidatedWingViewProps {
   dayState: DayState;
@@ -96,7 +111,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
     }
   };
 
-  const summarized155 = calculateUnitSummarizedRow(dayState, '155 UASU BAF');
+  const summarized155 = getEffectiveUnitSummarizedRow(dayState, '155 UASU BAF');
   const rowByUnit = new Map(
     dayState.consolidatedUnits.map((u) => [u.sqnUnit.toLowerCase(), u])
   );
@@ -127,9 +142,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
 
   // Helper to compute the summarized values matching 155 UASU BAF heading columns for any squadron row
   const getRowSummary = (row: UnitRowState) => {
-    const hasNominalRoll =
-      row.sqnUnit === '155 UASU BAF' || getUnitAirmen(dayState, row.sqnUnit).length > 0;
-    if (hasNominalRoll) {
+    if (shouldUseNominalRollForUnit(dayState, row)) {
       const unitSum = calculateUnitSummarizedRow(dayState, row.sqnUnit);
       return {
         sqnUnit: row.sqnUnit,
@@ -154,68 +167,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
       };
     }
 
-    const totalStr = row.totalStr || 0;
-    const detTdy = row.detTdy || 0;
-    const effStr = Math.max(0, totalStr - detTdy);
-    const leave = row.leave || 0;
-    const course = row.course || 0;
-    const awolDetention = (row.awol || 0) + (row.detention || 0);
-    const sickReport = row.sickReport || 0;
-    const edExPpgf = (row.ed || 0) + (row.exPpgf || 0);
-    const cmhBnsBshQmt =
-      (row.cmh || 0) + (row.bns || 0) + (row.bsh || 0) + (row.quarantine || 0);
-    const ucUBoard = (row.uc || 0) + (row.uBoard || 0);
-    const officeDuty = (row.officeDuty || 0) + (row.canteen || 0) + (row.bakery || 0);
-    const aftNiFlgNiDuty = (row.aftFlg || 0) + (row.niFlg || 0) + (row.niDuty || 0);
-    const gdTfAirfieldDuty =
-      (row.baseSecurityGd || 0) + (row.baseTaskforceBtf || 0) + (row.airfieldDuty || 0);
-    const driving = row.driving || 0;
-
-    const customDisposals: Record<string, number> = {};
-    let customTotal = 0;
-    savedCustomNames.forEach((name) => {
-      const val = row.customDisposals?.[name] || 0;
-      customDisposals[name] = val;
-      customTotal += val;
-    });
-
-    const totalOutParade =
-      leave +
-      course +
-      awolDetention +
-      sickReport +
-      edExPpgf +
-      cmhBnsBshQmt +
-      ucUBoard +
-      officeDuty +
-      aftNiFlgNiDuty +
-      gdTfAirfieldDuty +
-      driving +
-      customTotal;
-
-    const onParade = Math.max(0, effStr - totalOutParade);
-
-    return {
-      sqnUnit: row.sqnUnit,
-      totalStr,
-      detTdy,
-      effStr,
-      leave,
-      course,
-      awolDetention,
-      sickReport,
-      edExPpgf,
-      cmhBnsBshQmt,
-      ucUBoard,
-      officeDuty,
-      aftNiFlgNiDuty,
-      gdTfAirfieldDuty,
-      driving,
-      customDisposals,
-      totalOutParade,
-      onParade,
-      remarks: row.rmks || '',
-    };
+    return summarizeUnitRowFromCounts(row, savedCustomNames);
   };
 
   const rowSummaries = units.map(getRowSummary);
@@ -240,7 +192,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
       acc.totalOutParade += r.totalOutParade;
       acc.onParade += r.onParade;
       customEntries.forEach(([name]) => {
-        acc.customDisposals[name] = (acc.customDisposals[name] || 0) + (r.customDisposals[name] || 0);
+        acc.customDisposals[name] = (acc.customDisposals[name] || 0) + (r.customDisposals?.[name] || 0);
       });
       return acc;
     },
@@ -267,7 +219,20 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
 
   const startEdit = (row: UnitRowState) => {
     const counts: Record<string, number> = {};
-    if (row.disposalCounts) {
+    const usingNominal = shouldUseNominalRollForUnit(dayState, row);
+
+    if (usingNominal) {
+      const unitDisposals = (dayState.disposals || []).filter((d) => d.unit === row.sqnUnit);
+      unitDisposals.forEach((d) => {
+        const key = (d.detail || d.displayCategory || '').trim();
+        if (!key) return;
+        if (key.toLowerCase().startsWith('tdy')) {
+          counts['TDY'] = (counts['TDY'] || 0) + 1;
+        } else {
+          counts[key] = (counts[key] || 0) + 1;
+        }
+      });
+    } else if (row.disposalCounts) {
       Object.entries(row.disposalCounts).forEach(([k, v]) => {
         counts[k] = v || 0;
       });
@@ -313,11 +278,16 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
       }
     });
 
+    const effectiveSummary = getRowSummary(row);
     setEditingSqn(row.sqnUnit);
     setEditingSourceRow(row);
-    setEditTotalStr(row.totalStr || 0);
+    setEditTotalStr(
+      usingNominal
+        ? effectiveSummary.totalStr || getUnitAirmen(dayState, row.sqnUnit).length
+        : row.totalStr || 0
+    );
     setEditCounts(counts);
-    setEditRemarks(row.rmks || '');
+    setEditRemarks(usingNominal ? effectiveSummary.remarks || '' : row.rmks || '');
     setShowResetConfirm(false);
     setIsAddingCustom(false);
     setNewCustomName('');
@@ -982,6 +952,8 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                 const is155 = row.sqnUnit === '155 UASU BAF';
                 const canOpenRowUnit =
                   !lockedUnit || row.sqnUnit.toLowerCase() === lockedUnit.toLowerCase();
+                const isUnitUpdatedToday =
+                  isGuestView || hasUnitUpdatedStateForDate(dayState, row.sqnUnit);
 
                 return (
                   <tr
@@ -993,22 +965,45 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                     {/* Sqn/Unit */}
                     <td className="px-3 py-2 font-bold text-left whitespace-nowrap border-r border-slate-700/80">
                       <div className="flex items-center justify-between gap-2">
-                        {canOpenRowUnit ? (
-                          <button
-                            type="button"
-                            onClick={() => onSelectUnit(row.sqnUnit)}
-                            className={`text-left hover:underline cursor-pointer ${
-                              is155 ? 'text-emerald-400 font-bold' : 'text-slate-100 hover:text-emerald-300'
-                            }`}
-                            title={`Open ${row.sqnUnit} state & Nominal Roll`}
-                          >
-                            {row.sqnUnit}
-                          </button>
-                        ) : (
-                          <span className="text-left text-slate-300 font-semibold">
-                            {row.sqnUnit}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {!isUnitUpdatedToday && (
+                            <span
+                              className="no-print inline-flex items-center justify-center shrink-0 text-rose-500"
+                              title={`${row.sqnUnit} state has not been updated yet for ${dayState.formattedDisplayDate}`}
+                            >
+                              <AlertCircle className="w-3.5 h-3.5 stroke-[2.4]" />
+                            </span>
+                          )}
+                          {canOpenRowUnit ? (
+                            <button
+                              type="button"
+                              onClick={() => onSelectUnit(row.sqnUnit)}
+                              className={`text-left hover:underline cursor-pointer ${
+                                is155
+                                  ? 'text-emerald-400 font-bold'
+                                  : 'text-slate-100 hover:text-emerald-300'
+                              }`}
+                              title={
+                                !isUnitUpdatedToday
+                                  ? `${row.sqnUnit} — State not updated yet for ${dayState.formattedDisplayDate}`
+                                  : `Open ${row.sqnUnit} state & Nominal Roll`
+                              }
+                            >
+                              {row.sqnUnit}
+                            </button>
+                          ) : (
+                            <span
+                              className="text-left text-slate-300 font-semibold"
+                              title={
+                                !isUnitUpdatedToday
+                                  ? `${row.sqnUnit} — State not updated yet for ${dayState.formattedDisplayDate}`
+                                  : row.sqnUnit
+                              }
+                            >
+                              {row.sqnUnit}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-1">
                           {canOpenRowUnit && (
                             <button
@@ -1020,24 +1015,20 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                               Details
                             </button>
                           )}
-                          {!isGuestView &&
-                            canOpenRowUnit &&
-                            canQuickEdit &&
-                            getUnitAirmen(dayState, row.sqnUnit).length === 0 &&
-                            !is155 && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  onRequireAuth
-                                    ? onRequireAuth(() => startEdit(row))
-                                    : startEdit(row)
-                                }
-                                className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
-                                title="Quick edit squadron count"
-                              >
-                                <Edit3 className="w-3 h-3" />
-                              </button>
-                            )}
+                          {!isGuestView && canOpenRowUnit && canQuickEdit && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onRequireAuth
+                                  ? onRequireAuth(() => startEdit(row))
+                                  : startEdit(row)
+                              }
+                              className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
+                              title="Quick edit squadron count"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -1089,7 +1080,7 @@ export const ConsolidatedWingView: React.FC<ConsolidatedWingViewProps> = ({
                         key={`wing-custom-${row.sqnUnit}-${customName}`}
                         className="px-2 py-2 border-r border-slate-700/80 font-semibold text-amber-300 whitespace-nowrap"
                       >
-                        {displayVal(summary.customDisposals[customName] || 0)}
+                        {displayVal(summary.customDisposals?.[customName] || 0)}
                       </td>
                     ))}
                     <td className="px-2 py-2 border-r border-slate-700/80 font-bold text-rose-400 whitespace-nowrap">

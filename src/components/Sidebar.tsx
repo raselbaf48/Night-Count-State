@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  AlertCircle,
   Shield,
   Building2,
   Settings,
@@ -12,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { DayState, OperatorProfile, UserRole, WingConfig } from '../types/nightCount';
-import { getUnitAirmen } from '../utils/storage';
+import { getUnitAirmen, hasUnitUpdatedStateForDate } from '../utils/storage';
 
 interface SidebarProps {
   wings: WingConfig[];
@@ -236,12 +237,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         displayUnits.map((unitName) => {
                           const isActive = activeTab === unitName;
                           const unitAirmenCount = getUnitAirmen(dayState, unitName).length;
+                          const isUpdatedToday =
+                            operatorRole === 'GUEST' ||
+                            hasUnitUpdatedStateForDate(dayState, unitName);
                           return (
                             <button
                               key={unitName}
                               type="button"
                               onClick={() => handleNavClick(() => onSelectUnit(unitName, wing.id))}
-                              title={unitName}
+                              title={
+                                !isUpdatedToday
+                                  ? `${unitName} — State not updated yet for ${dayState.formattedDisplayDate}`
+                                  : unitName
+                              }
                               className={`w-full flex items-center justify-between gap-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer border ${
                                 compact ? 'justify-center px-2 py-2.5' : 'px-3 py-2'
                               } ${
@@ -250,8 +258,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   : 'sidebar-box-btn bg-gradient-to-r from-[#0b4430] via-[#083827] to-[#062b1e] hover:from-[#105c41] hover:via-[#0b4430] hover:to-[#083626] border-[#175e45] hover:border-emerald-400/50 text-emerald-50 hover:text-white shadow-sm'
                               }`}
                             >
-                              <span className="flex items-center gap-2.5 min-w-0">
-                                <Building2 className="w-4 h-4 shrink-0" />
+                              <span className="flex items-center gap-2 min-w-0">
+                                {!isUpdatedToday ? (
+                                  <AlertCircle
+                                    className={`w-4 h-4 shrink-0 stroke-[2.3] ${
+                                      isActive ? 'text-rose-900' : 'text-rose-400'
+                                    }`}
+                                  />
+                                ) : (
+                                  <Building2 className="w-4 h-4 shrink-0" />
+                                )}
                                 {!compact && <span className="truncate">{unitName}</span>}
                               </span>
                               {!compact && unitAirmenCount > 0 && (

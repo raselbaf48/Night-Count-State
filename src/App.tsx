@@ -61,10 +61,8 @@ import {
   saveGuestSession,
   clearGuestSession,
   loadRecentUserIds,
-  saveRecentUserIdsList,
   recordRecentUserId,
   removeRecentUserId,
-  mergeRecentUserIds,
   loadLoginHistory,
   saveLoginHistoryList,
   recordLoginHistoryEntry,
@@ -82,6 +80,9 @@ import {
   canManageRolePermission,
   loadThemePreference,
   saveThemePreference,
+  applyMasterRosterToDayState,
+  propagatePriorDayUpdateToLaterDays,
+  syncRosterChangeAcrossStorage,
 } from './utils/storage';
 import {
   auth,
@@ -102,7 +103,7 @@ import { createBlankUnitRow, DISPOSAL_OPTIONS, INITIAL_PREPARED_BY } from './dat
 import { FileSpreadsheet, Users, History, Megaphone, X, Lock, UserCheck } from 'lucide-react';
 import { OfflineIndicator } from './components/OfflineIndicator';
 
-const CLOUD_UPLOAD_DEBOUNCE_MS = 8000; // Always completes within 10 seconds of data change
+const CLOUD_UPLOAD_DEBOUNCE_MS = 300; // Upload edits almost immediately so reloads never lose changes
 
 export default function App() {
   const initialPrefs = React.useMemo(() => loadUiPrefs(), []);
@@ -276,7 +277,6 @@ export default function App() {
       preparedBy: PreparedByInfo,
       savedCustomDisposals: string[],
       overrides?: {
-        recentUserIds?: string[];
         loginHistory?: LoginHistoryEntry[];
         appNotice?: string;
         wings?: WingConfig[];
@@ -287,7 +287,6 @@ export default function App() {
         preparedBy,
         savedCustomDisposals,
         hiddenQuickEditDisposals: loadHiddenQuickEditDisposals(),
-        recentUserIds: overrides?.recentUserIds ?? loadRecentUserIds(),
         loginHistory: overrides?.loginHistory ?? loadLoginHistory(),
         appNotice: overrides?.appNotice ?? loadAppNotice(),
         wings: overrides?.wings ?? loadWingsConfig(),
@@ -369,6 +368,7 @@ export default function App() {
         }
       }
 
+      // Recent accounts are saved strictly in local storage per device (never synced across devices)
       const nextRecent = recordRecentUserId(operator.bdNo);
       const nextHistory = recordLoginHistoryEntry(operator, loginMode);
       setRecentUserIds(nextRecent);
@@ -376,7 +376,7 @@ export default function App() {
       markSettingsChangedForCloud(
         dayState.preparedBy,
         dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
-        { recentUserIds: nextRecent, loginHistory: nextHistory }
+        { loginHistory: nextHistory }
       );
       void flushCloudUploads();
 
@@ -490,23 +490,26 @@ export default function App() {
         ...withAirman,
         consolidatedUnits: syncedUnits,
         updateLogs: nextLogs,
+        lastUpdatedAt: Date.now(),
       };
 
       userEditedDatesRef.current.add(fullySynced.date);
       saveDayState(fullySynced);
+      const rosterAffectedDays = syncRosterChangeAcrossStorage(fullySynced);
+      rosterAffectedDays.forEach((d) => markDayChangedForCloud(d));
       markDayChangedForCloud(fullySynced);
       setDayState(fullySynced);
 
+      // Recent accounts remain strictly local to this device
       const nextRecent = recordRecentUserId(cleanBd);
       setRecentUserIds(nextRecent);
-      markSettingsChangedForCloud(
-        fullySynced.preparedBy,
-        fullySynced.savedCustomDisposals ?? loadSavedCustomDisposals(),
-        {
-          recentUserIds: nextRecent,
-          ...(wingsChanged ? { wings: nextWings } : {}),
-        }
-      );
+      if (wingsChanged) {
+        markSettingsChangedForCloud(
+          fullySynced.preparedBy,
+          fullySynced.savedCustomDisposals ?? loadSavedCustomDisposals(),
+          { wings: nextWings }
+        );
+      }
       void flushCloudUploads();
 
       return { ok: true };
@@ -514,18 +517,10 @@ export default function App() {
     [dayState, flushCloudUploads, markDayChangedForCloud, markSettingsChangedForCloud, wings]
   );
 
-  const handleRemoveRecentUserId = React.useCallback(
-    (bdNo: string) => {
-      const nextRecent = removeRecentUserId(bdNo);
-      setRecentUserIds(nextRecent);
-      markSettingsChangedForCloud(
-        dayState.preparedBy,
-        dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
-        { recentUserIds: nextRecent }
-      );
-    },
-    [dayState.preparedBy, dayState.savedCustomDisposals, markSettingsChangedForCloud]
-  );
+  const handleRemoveRecentUserId = React.useCallback((bdNo: string) => {
+    const nextRecent = removeRecentUserId(bdNo);
+    setRecentUserIds(nextRecent);
+  }, []);
 
   // Persist current date, tab, and sub-tab so user's view never resets
   useEffect(() => {
@@ -606,14 +601,6 @@ export default function App() {
           savePreparedByStorage(result.settings.preparedBy);
           saveCustomDisposalsList(result.settings.savedCustomDisposals);
           saveHiddenQuickEditDisposals(result.settings.hiddenQuickEditDisposals);
-          if (Array.isArray(result.settings.recentUserIds) && result.settings.recentUserIds.length > 0) {
-            const mergedRecent = mergeRecentUserIds(
-              result.settings.recentUserIds,
-              loadRecentUserIds()
-            );
-            saveRecentUserIdsList(mergedRecent);
-            setRecentUserIds(mergedRecent);
-          }
           if (Array.isArray(result.settings.loginHistory) && result.settings.loginHistory.length > 0) {
             const mergedHistory = mergeLoginHistoryLists(
               result.settings.loginHistory,
@@ -642,33 +629,78 @@ export default function App() {
 
         let normalizedPrior: DayState | null = null;
         if (result.priorCloudDayState) {
-          normalizedPrior = normalizeDayState(result.priorCloudDayState);
-          saveDayState(normalizedPrior);
-          syncedDayHashesRef.current.set(
-            normalizedPrior.date,
-            computeDayFingerprint(normalizedPrior)
+          const priorCloud = applyMasterRosterToDayState(
+            normalizeDayState(result.priorCloudDayState)
           );
+          const localPriorRaw = localStorage.getItem(`night_count_state_${priorCloud.date}`);
+          let localPriorTs = 0;
+          if (localPriorRaw) {
+            try {
+              localPriorTs = Number(JSON.parse(localPriorRaw)?.lastUpdatedAt) || 0;
+            } catch {
+              localPriorTs = 0;
+            }
+          }
+          if (!localPriorRaw || (priorCloud.lastUpdatedAt || 0) >= localPriorTs) {
+            normalizedPrior = priorCloud;
+            saveDayState(normalizedPrior);
+            syncedDayHashesRef.current.set(
+              normalizedPrior.date,
+              computeDayFingerprint(normalizedPrior)
+            );
+          } else {
+            normalizedPrior = loadDayState(priorCloud.date);
+          }
         }
 
         if (result.dayState) {
-          const baseCloud = normalizeDayState(result.dayState);
-          const normalizedCloud = ensureDayStateHasConfiguredUnits(
-            carryForwardPriorUnitRows(baseCloud, normalizedPrior),
-            effectiveWings
-          );
-          if (result.settings) {
-            normalizedCloud.preparedBy = result.settings.preparedBy;
-            normalizedCloud.savedCustomDisposals = result.settings.savedCustomDisposals;
+          const baseCloud = applyMasterRosterToDayState(normalizeDayState(result.dayState));
+          const localBootRaw = localStorage.getItem(`night_count_state_${baseCloud.date}`);
+          let localBootTs = 0;
+          if (localBootRaw) {
+            try {
+              localBootTs = Number(JSON.parse(localBootRaw)?.lastUpdatedAt) || 0;
+            } catch {
+              localBootTs = 0;
+            }
           }
-          saveDayState(normalizedCloud);
-          syncedDayHashesRef.current.set(
-            normalizedCloud.date,
-            computeDayFingerprint(baseCloud)
-          );
-          if (!userEditedDatesRef.current.has(normalizedCloud.date)) {
+          const cloudIsNewerOrEqual =
+            !localBootRaw ||
+            !localBootTs ||
+            (baseCloud.lastUpdatedAt || 0) >= localBootTs;
+
+          if (cloudIsNewerOrEqual && !userEditedDatesRef.current.has(baseCloud.date)) {
+            const carriedCloud = carryForwardPriorUnitRows(baseCloud, normalizedPrior);
+            const normalizedCloud = ensureDayStateHasConfiguredUnits(
+              {
+                ...carriedCloud,
+                consolidatedUnits: syncConsolidated155Row(
+                  carriedCloud.consolidatedUnits,
+                  carriedCloud
+                ),
+              },
+              effectiveWings
+            );
+            if (result.settings) {
+              normalizedCloud.preparedBy = result.settings.preparedBy;
+              normalizedCloud.savedCustomDisposals = result.settings.savedCustomDisposals;
+            }
+            saveDayState(normalizedCloud);
+            syncedDayHashesRef.current.set(
+              normalizedCloud.date,
+              computeDayFingerprint(baseCloud)
+            );
             setDayState((curr) =>
               curr.date === normalizedCloud.date ? normalizedCloud : curr
             );
+          } else if (localBootRaw) {
+            const newerLocal = ensureDayStateHasConfiguredUnits(
+              loadDayState(baseCloud.date, normalizedPrior ?? undefined),
+              effectiveWings
+            );
+            dirtyDaysRef.current.set(newerLocal.date, newerLocal);
+            scheduleCloudUpload();
+            setDayState((curr) => (curr.date === newerLocal.date ? newerLocal : curr));
           }
         } else if (normalizedPrior) {
           if (!userEditedDatesRef.current.has(bootDateIso)) {
@@ -704,7 +736,7 @@ export default function App() {
         window.clearTimeout(uploadTimerRef.current);
       }
     };
-  }, [flushCloudUploads, initialPrefs.dateIso]);
+  }, [flushCloudUploads, initialPrefs.dateIso, scheduleCloudUpload]);
 
   const switchToDate = (nextDateIso: string) => {
     if (!nextDateIso || nextDateIso === dateIso) return;
@@ -721,8 +753,30 @@ export default function App() {
       void downloadDayFromCloud(nextDateIso)
         .then((cloudDay) => {
           if (!cloudDay || userEditedDatesRef.current.has(nextDateIso)) return;
-          const baseCloud = normalizeDayState(cloudDay);
-          const normalizedCloud = carryForwardPriorUnitRows(baseCloud, dayState);
+          const localRaw = localStorage.getItem(`night_count_state_${nextDateIso}`);
+          let localTs = 0;
+          if (localRaw) {
+            try {
+              localTs = Number(JSON.parse(localRaw)?.lastUpdatedAt) || 0;
+            } catch {
+              localTs = 0;
+            }
+          }
+          if (localRaw && localTs > 0 && (cloudDay.lastUpdatedAt || 0) < localTs) {
+            // Local version is newer than Cloud; push local to Cloud instead of overwriting!
+            const localState = loadDayState(nextDateIso, dayState);
+            markDayChangedForCloud(localState);
+            return;
+          }
+          const baseCloud = applyMasterRosterToDayState(normalizeDayState(cloudDay));
+          const carriedCloud = carryForwardPriorUnitRows(baseCloud, dayState);
+          const normalizedCloud: DayState = {
+            ...carriedCloud,
+            consolidatedUnits: syncConsolidated155Row(
+              carriedCloud.consolidatedUnits,
+              carriedCloud
+            ),
+          };
           saveDayState(normalizedCloud);
           syncedDayHashesRef.current.set(
             nextDateIso,
@@ -736,20 +790,29 @@ export default function App() {
     }
   };
 
-  // Persist dayState when updated, record State Update Log, sync unit rows, and schedule 8s Cloud upload ONLY if data changed
+  // Persist dayState when updated, record State Update Log, sync unit rows, propagate roster/prior-day changes, and upload to Cloud
   const updateAndSaveState = (
     updater: (prev: DayState) => DayState,
     logMeta?: {
       area: StateUpdateLogEntry['area'];
       unitName: string;
       action: string;
+    },
+    options?: {
+      forceNominalUnit?: string;
+      syncRoster?: boolean;
+      deletedAirman?: { id?: string; bdNo?: string };
     }
   ) => {
     if (isGuestSession) return;
     setDayState((prev) => {
       const next = updater(prev);
       if (next === prev) return prev;
-      const syncedUnits = syncConsolidated155Row(next.consolidatedUnits, next);
+      const syncedUnits = syncConsolidated155Row(
+        next.consolidatedUnits,
+        next,
+        options?.forceNominalUnit
+      );
       let nextLogs = next.updateLogs ?? prev.updateLogs ?? [];
       const operator = verifiedOperatorRef.current;
       if (logMeta && operator) {
@@ -762,12 +825,20 @@ export default function App() {
         );
         nextLogs = [...nextLogs, entry].slice(-500);
       }
+      const now = Date.now();
       const fullySynced: DayState = {
         ...next,
         consolidatedUnits: syncedUnits,
         updateLogs: nextLogs,
+        lastUpdatedAt: now,
       };
       saveDayState(fullySynced);
+      if (options?.syncRoster) {
+        const rosterDays = syncRosterChangeAcrossStorage(fullySynced, options.deletedAirman);
+        rosterDays.forEach((d) => markDayChangedForCloud(d));
+      }
+      const propagatedLaterDays = propagatePriorDayUpdateToLaterDays(fullySynced);
+      propagatedLaterDays.forEach((d) => markDayChangedForCloud(d));
       markDayChangedForCloud(fullySynced);
       return fullySynced;
     });
@@ -1057,6 +1128,9 @@ export default function App() {
         area: 'Nominal Roll',
         unitName: activeUnitName,
         action: actionDesc,
+      },
+      {
+        forceNominalUnit: activeUnitName,
       }
     );
   };
@@ -1195,6 +1269,9 @@ export default function App() {
         action: dispTarget
           ? `Removed disposal (${dispTarget.displayCategory || dispTarget.detail}) for ${dispTarget.rank} ${dispTarget.name}`
           : 'Removed disposal record',
+      },
+      {
+        forceNominalUnit: targetUnit,
       }
     );
   };
@@ -1247,6 +1324,9 @@ export default function App() {
         action: targetAirman
           ? `Toggled parade status for ${targetAirman.rank} ${targetAirman.name}`
           : 'Toggled parade status',
+      },
+      {
+        forceNominalUnit: activeUnitName,
       }
     );
   };
@@ -1275,6 +1355,10 @@ export default function App() {
         area: 'Nominal Roll',
         unitName: targetUnit,
         action: `Added airman ${newAirmanData.rank} ${newAirmanData.name} (BD ${newAirmanData.bdNo || '-'})`,
+      },
+      {
+        forceNominalUnit: targetUnit,
+        syncRoster: true,
       }
     );
   };
@@ -1314,6 +1398,10 @@ export default function App() {
         area: 'Nominal Roll',
         unitName: targetUnit,
         action: `Imported ${newAirmenList.length} airmen to Nominal Roll`,
+      },
+      {
+        forceNominalUnit: targetUnit,
+        syncRoster: true,
       }
     );
   };
@@ -1354,13 +1442,33 @@ export default function App() {
   // Update unit remarks (live typing, logged on blur via handleCommitRemarks)
   const handleUpdateRemarks = (remarks: string) => {
     if (!canManage('editUnitDisposals') || !canEditUnitNominalRoll(activeUnitName)) return;
-    updateAndSaveState((prev) => setUnitRemarks(prev, activeUnitName, remarks));
+    updateAndSaveState((prev) => {
+      const next = setUnitRemarks(prev, activeUnitName, remarks);
+      return {
+        ...next,
+        consolidatedUnits: next.consolidatedUnits.map((u) =>
+          u.sqnUnit.toLowerCase() === activeUnitName.toLowerCase()
+            ? { ...u, rmks: remarks }
+            : u
+        ),
+      };
+    });
   };
 
   const handleCommitRemarks = (remarks: string) => {
     if (!canManage('editUnitDisposals') || !canEditUnitNominalRoll(activeUnitName)) return;
     updateAndSaveState(
-      (prev) => ({ ...setUnitRemarks(prev, activeUnitName, remarks) }),
+      (prev) => {
+        const next = setUnitRemarks(prev, activeUnitName, remarks);
+        return {
+          ...next,
+          consolidatedUnits: next.consolidatedUnits.map((u) =>
+            u.sqnUnit.toLowerCase() === activeUnitName.toLowerCase()
+              ? { ...u, rmks: remarks }
+              : u
+          ),
+        };
+      },
       {
         area: 'Unit State',
         unitName: activeUnitName,
@@ -1388,6 +1496,11 @@ export default function App() {
         action: targetAirman
           ? `Removed airman ${targetAirman.rank} ${targetAirman.name} (BD ${targetAirman.bdNo || '-'})`
           : 'Removed airman from Nominal Roll',
+      },
+      {
+        forceNominalUnit: activeUnitName,
+        syncRoster: true,
+        deletedAirman: { id: airmanId, bdNo: targetAirman?.bdNo },
       }
     );
   };
@@ -1438,6 +1551,10 @@ export default function App() {
         area: 'Nominal Roll',
         unitName: targetUnit,
         action: `Updated ${updatedAirman.rank} ${updatedAirman.name} (BD ${updatedAirman.bdNo || '-'}) → ${disposalVal && disposalVal !== '-' ? disposalVal : 'On Parade'}`,
+      },
+      {
+        forceNominalUnit: targetUnit,
+        syncRoster: true,
       }
     );
   };
@@ -1648,6 +1765,9 @@ export default function App() {
           area: 'Unit State',
           unitName: cleanNewName,
           action: `Updated Sqn/Unit "${oldUnitName}" to "${cleanNewName}"`,
+        },
+        {
+          syncRoster: true,
         }
       );
     }
@@ -1679,6 +1799,10 @@ export default function App() {
         action: targetAirman
           ? `Removed airman ${targetAirman.rank} ${targetAirman.name} (BD ${targetAirman.bdNo || '-'})`
           : 'Removed airman from Nominal Roll',
+      },
+      {
+        syncRoster: true,
+        deletedAirman: { id: airmanId, bdNo: targetAirman?.bdNo },
       }
     );
   };
@@ -1707,6 +1831,9 @@ export default function App() {
         area: 'Nominal Roll',
         unitName: targetUnit,
         action: `Added user ${newAirmanData.rank} ${newAirmanData.name} (BD ${newAirmanData.bdNo || '-'})`,
+      },
+      {
+        syncRoster: true,
       }
     );
   };
@@ -1727,8 +1854,9 @@ export default function App() {
     if (!canManage('manageUsers') || !canEditUnitNominalRoll(unitName)) return;
     const targetAirman = getUnitAirmen(dayState, unitName).find((a) => a.id === airmanId);
     const changes: string[] = [];
+    const canChangeRole = currentRole === 'OWNER' || currentRole === 'SUPER_ADMIN';
     if (
-      currentRole === 'OWNER' &&
+      canChangeRole &&
       updates.role &&
       updates.role !== (targetAirman?.role || 'USER')
     ) {
@@ -1760,14 +1888,17 @@ export default function App() {
           if (updates.bdNo !== undefined) next.bdNo = updates.bdNo.trim();
           if (updates.trade !== undefined) next.trade = updates.trade.trim();
           if (updates.flight !== undefined) next.flight = updates.flight.trim();
-          if (currentRole === 'OWNER' && updates.role !== undefined) {
-            next.role = updates.role;
+          if (canChangeRole && updates.role !== undefined) {
+            // Only OWNER can promote to or demote from OWNER
+            if (currentRole === 'OWNER' || (updates.role !== 'OWNER' && a.role !== 'OWNER')) {
+              next.role = updates.role;
+            }
           }
           if (updates.adminPin !== undefined) {
             const cleanPin = updates.adminPin.trim();
             if (cleanPin) {
               next.adminPin = cleanPin;
-            } else {
+            } else if ((next.role || 'USER') === 'USER') {
               delete next.adminPin;
             }
           }
@@ -1783,6 +1914,9 @@ export default function App() {
               changes.length ? `: ${changes.join(', ')}` : ''
             }`
           : 'Updated user profile in User Management',
+      },
+      {
+        syncRoster: true,
       }
     );
   };
@@ -1806,11 +1940,6 @@ export default function App() {
       savePreparedByStorage(result.settings.preparedBy);
       saveCustomDisposalsList(result.settings.savedCustomDisposals);
       saveHiddenQuickEditDisposals(result.settings.hiddenQuickEditDisposals);
-      if (Array.isArray(result.settings.recentUserIds)) {
-        const mergedRecent = mergeRecentUserIds(result.settings.recentUserIds, loadRecentUserIds());
-        saveRecentUserIdsList(mergedRecent);
-        setRecentUserIds(mergedRecent);
-      }
       if (Array.isArray(result.settings.loginHistory)) {
         const mergedHistory = mergeLoginHistoryLists(result.settings.loginHistory, loadLoginHistory());
         saveLoginHistoryList(mergedHistory);
@@ -1834,14 +1963,23 @@ export default function App() {
 
     let normalizedPrior: DayState | null = null;
     if (result.priorCloudDayState) {
-      normalizedPrior = normalizeDayState(result.priorCloudDayState);
+      normalizedPrior = applyMasterRosterToDayState(
+        normalizeDayState(result.priorCloudDayState)
+      );
       saveDayState(normalizedPrior);
     }
 
     if (result.dayState) {
-      const baseCloud = normalizeDayState(result.dayState);
+      const baseCloud = applyMasterRosterToDayState(normalizeDayState(result.dayState));
+      const carriedCloud = carryForwardPriorUnitRows(baseCloud, normalizedPrior);
       const normalizedCloud = ensureDayStateHasConfiguredUnits(
-        carryForwardPriorUnitRows(baseCloud, normalizedPrior),
+        {
+          ...carriedCloud,
+          consolidatedUnits: syncConsolidated155Row(
+            carriedCloud.consolidatedUnits,
+            carriedCloud
+          ),
+        },
         nextWings
       );
       if (result.settings) {
@@ -1859,7 +1997,6 @@ export default function App() {
       preparedBy: dayState.preparedBy,
       savedCustomDisposals: dayState.savedCustomDisposals ?? loadSavedCustomDisposals(),
       hiddenQuickEditDisposals: loadHiddenQuickEditDisposals(),
-      recentUserIds: loadRecentUserIds(),
       loginHistory: loadLoginHistory(),
       appNotice: loadAppNotice(),
       wings: loadWingsConfig(),

@@ -3,6 +3,9 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  Eye,
+  EyeOff,
+  KeyRound,
   Lock,
   LogIn,
   Shield,
@@ -10,7 +13,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { DayState, OperatorProfile, Rank, WingConfig } from '../types/nightCount';
+import { DayState, OperatorProfile, Rank, UserRole, WingConfig } from '../types/nightCount';
 import { BAF_ALL_RANKS, BAF_FLIGHTS, BAF_TRADES } from '../data/initialData';
 import {
   findExistingBdConflict,
@@ -51,11 +54,15 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
 }) => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [userId, setUserId] = useState<string>('');
+  const [loginPin, setLoginPin] = useState<string>('');
+  const [showPinText, setShowPinText] = useState<boolean>(false);
   const [isFocused, setIsFocused] = useState(false);
+  const [isPinFocused, setIsPinFocused] = useState(false);
   const [showRecentMenu, setShowRecentMenu] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [registerSuccess, setRegisterSuccess] = useState<string | null>(null);
 
+  const pinInputRef = useRef<HTMLInputElement>(null);
   const allConfiguredUnits = useMemo(() => getAllConfiguredUnits(wings), [wings]);
 
   // Register form state — NO box is pre-filled by default, all use floating notched-border labels
@@ -99,14 +106,80 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
     return () => document.removeEventListener('mousedown', handleOutsideMouseDown);
   }, [showRecentMenu]);
 
+  const getAccountPinDetails = (rawBd: string) => {
+    const cleanId = rawBd.trim();
+    if (!/^\d{6}$/.test(cleanId)) {
+      return {
+        matchedOperator: null,
+        matchedAirman: null,
+        role: 'USER' as UserRole,
+        requiresPin: false,
+        expectedPin: '',
+        hasCustomPin: false,
+      };
+    }
+    const conflict = findExistingBdConflict(dayState, cleanId);
+    const matchedAirman = conflict?.airman || null;
+    const matchedOperator = findOperatorByBd(dayState, cleanId);
+    const role: UserRole =
+      matchedAirman?.role || (cleanId === '474455' ? 'OWNER' : 'USER');
+    const configuredPin = (matchedAirman?.adminPin || '').trim();
+    const isElevated =
+      role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'OWNER';
+    const requiresPin = Boolean(
+      matchedOperator && (isElevated || Boolean(configuredPin))
+    );
+    const expectedPin = configuredPin || '1124';
+    return {
+      matchedOperator,
+      matchedAirman,
+      role,
+      requiresPin,
+      expectedPin,
+      hasCustomPin: Boolean(configuredPin),
+    };
+  };
+
+  const activePinDetails = useMemo(
+    () => getAccountPinDetails(userId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dayState, userId]
+  );
+
+  // Automatically focus the PIN input box when a 6-digit elevated User ID is entered
+  useEffect(() => {
+    if (mode === 'login' && activePinDetails.requiresPin) {
+      setShowRecentMenu(false);
+      const timer = window.setTimeout(() => {
+        pinInputRef.current?.focus();
+      }, 30);
+      return () => window.clearTimeout(timer);
+    }
+  }, [mode, activePinDetails.requiresPin, userId]);
+
   const handleUserIdChange = (raw: string) => {
     const digits = raw.replace(/\D/g, '').slice(0, 6);
     setUserId(digits);
+    setLoginPin('');
     setError(null);
     setRegisterSuccess(null);
   };
 
-  const loginWithId = (rawId: string) => {
+  const handlePinChange = (rawPin: string) => {
+    const cleanPin = rawPin.replace(/\s/g, '').slice(0, 12);
+    setLoginPin(cleanPin);
+    setError(null);
+    if (
+      activePinDetails.requiresPin &&
+      activePinDetails.matchedOperator &&
+      cleanPin &&
+      cleanPin === activePinDetails.expectedPin
+    ) {
+      onLogin(activePinDetails.matchedOperator);
+    }
+  };
+
+  const loginWithId = (rawId: string, providedPin?: string) => {
     setError(null);
     const cleanId = rawId.trim();
     if (!/^\d{6}$/.test(cleanId)) {
@@ -114,28 +187,50 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
       return;
     }
 
-    const matched = findOperatorByBd(dayState, cleanId);
-    if (!matched) {
+    const details = getAccountPinDetails(cleanId);
+    if (!details.matchedOperator) {
       setError(
         'User ID (BD No) not found in Nominal Roll. Please Register or use Guest Login.'
       );
       return;
     }
 
-    onLogin(matched);
+    if (details.requiresPin) {
+      const candidatePin = (providedPin !== undefined ? providedPin : loginPin).trim();
+      if (!candidatePin) {
+        setShowRecentMenu(false);
+        setError(`Enter your ${details.role.replace('_', ' ')} Login PIN to continue.`);
+        window.setTimeout(() => pinInputRef.current?.focus(), 20);
+        return;
+      }
+      if (candidatePin !== details.expectedPin) {
+        setError('Invalid Login PIN. Please enter the correct PIN.');
+        window.setTimeout(() => pinInputRef.current?.focus(), 20);
+        return;
+      }
+    }
+
+    onLogin(details.matchedOperator);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setShowRecentMenu(false);
-    loginWithId(userId);
+    loginWithId(userId, loginPin);
   };
 
   const handleSelectRecent = (id: string) => {
     setUserId(id);
+    setLoginPin('');
     setShowRecentMenu(false);
+    setError(null);
     setRegisterSuccess(null);
-    loginWithId(id);
+    const details = getAccountPinDetails(id);
+    if (details.requiresPin) {
+      window.setTimeout(() => pinInputRef.current?.focus(), 30);
+      return;
+    }
+    loginWithId(id, '');
   };
 
   const resetRegisterForm = () => {
@@ -417,6 +512,7 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
                               onRemoveRecentUserId(recentId);
                               if (userId === recentId) {
                                 setUserId('');
+                                setLoginPin('');
                               }
                             }}
                             title={`Remove ${recentId} from recent accounts`}
@@ -427,6 +523,76 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {/* Super Admin / Admin Login PIN Box — automatically shown when an Admin / Super Admin / Owner User ID is entered */}
+              {activePinDetails.requiresPin && activePinDetails.matchedOperator && (
+                <div className="space-y-2 pt-0.5 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[11px]">
+                    <div className="flex items-center gap-1.5 text-emerald-300 font-semibold truncate">
+                      <KeyRound className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span className="truncate">
+                        {activePinDetails.matchedOperator.rank}{' '}
+                        {activePinDetails.matchedOperator.name}
+                      </span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[9px] font-extrabold uppercase tracking-wider shrink-0">
+                      {activePinDetails.role}
+                    </span>
+                  </div>
+
+                  <div className="relative pt-1">
+                    <label
+                      htmlFor="portal-login-pin"
+                      className={`absolute left-3.5 pointer-events-none transition-all duration-150 uppercase tracking-wider font-bold z-10 ${
+                        isPinFocused || loginPin.length > 0
+                          ? `top-1 -translate-y-1/2 px-1.5 bg-[#0d1728] text-[10px] ${
+                              isPinFocused ? 'text-emerald-400' : 'text-slate-400'
+                            }`
+                          : 'top-[calc(50%+2px)] -translate-y-1/2 text-xs text-slate-400'
+                      }`}
+                    >
+                      SUPER ADMIN / ADMIN LOGIN PIN
+                    </label>
+                    <input
+                      ref={pinInputRef}
+                      id="portal-login-pin"
+                      type={showPinText ? 'text' : 'password'}
+                      inputMode="numeric"
+                      maxLength={12}
+                      value={loginPin}
+                      onFocus={() => setIsPinFocused(true)}
+                      onBlur={() => setIsPinFocused(false)}
+                      onChange={(e) => handlePinChange(e.target.value)}
+                      aria-label="LOGIN PIN"
+                      className={`w-full bg-[#08101e] rounded-xl pl-4 pr-10 py-3 text-sm font-semibold text-white tracking-widest focus:outline-none transition-colors tabular-nums border ${
+                        isPinFocused ? 'border-emerald-500' : 'border-emerald-500/50'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => setShowPinText((v) => !v)}
+                      title={showPinText ? 'Hide PIN' : 'Show PIN'}
+                      className="absolute right-3 top-[calc(50%+2px)] -translate-y-1/2 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                    >
+                      {showPinText ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="text-[10px] text-slate-400 px-1 flex items-center justify-between">
+                    <span>PIN match করলে সাথে সাথে Auto Login হবে</span>
+                    {!activePinDetails.hasCustomPin && (
+                      <span className="text-amber-300/90 font-semibold tabular-nums">
+                        Default PIN: 1124
+                      </span>
+                    )}
                   </div>
                 </div>
               )}
